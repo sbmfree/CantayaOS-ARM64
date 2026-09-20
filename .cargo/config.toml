@@ -1,0 +1,18 @@
+# ──────────────────────────────────────────────────────────────
+# .cargo/config.toml  —  CantayaOS build configuration
+# ──────────────────────────────────────────────────────────────
+
+# The bootloader is a UEFI application (PE32+/COFF output).
+# Override per-crate via their own Cargo.toml build metadata.
+[build]
+target = "aarch64-unknown-uefi"
+
+# Unstable features needed for build-std (kernel custom target)
+[unstable]
+build-std = ["core", "compiler_builtins", "alloc"]
+build-std-features = ["compiler-builtins-mem"]
+
+[target.aarch64-unknown-uefi]
+rustflags = [
+    "-C", "link-arg=--entry=efi_main",
+]

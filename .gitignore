@@ -1,0 +1,10 @@
+# Generated build output
+/target/
+
+# Local QEMU/UEFI firmware
+/tools/OVMF_CODE.fd
+/tools/edk2-arm-vars.fd
+
+# Local machine files
+.DS_Store
+__pycache__/

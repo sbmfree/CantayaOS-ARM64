@@ -1,0 +1,21 @@
+[package]
+name        = "cantaya-boot"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# The bootloader is always compiled for the UEFI target; this is enforced by
+# `.cargo/config.toml` setting the default target to `aarch64-unknown-uefi`.
+
+[[bin]]
+name              = "cantaya-boot"
+path              = "src/main.rs"
+test              = false
+bench             = false
+
+[dependencies]
+cantaya-shared = { path = "../shared" }
+
+uefi    = { version = "0.37.0", features = ["alloc", "global_allocator", "panic_handler", "logger"] }
+log     = { version = "0.4", default-features = false }

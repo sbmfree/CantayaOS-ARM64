@@ -1,0 +1,28 @@
+[workspace]
+resolver = "2"
+members = [
+    "shared",
+    "bootloader",
+    "kernel",
+    "user",
+    "user-child",
+]
+
+[workspace.package]
+version     = "0.1.0"
+edition     = "2021"
+authors     = ["CantayaTech"]
+license     = "MIT"
+
+[profile.dev]
+opt-level   = 0
+debug       = true
+panic       = "abort"
+
+[profile.release]
+opt-level   = 3
+debug       = false
+lto         = true
+codegen-units = 1
+panic       = "abort"
+strip       = "symbols"

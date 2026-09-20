@@ -1,0 +1,12 @@
+[package]
+name = "cantaya-user-init"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "cantaya-user-init"
+path = "src/main.rs"
+test = false
+bench = false

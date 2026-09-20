@@ -1,0 +1,12 @@
+[package]
+name = "cantaya-user-child"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "cantaya-user-child"
+path = "src/main.rs"
+test = false
+bench = false

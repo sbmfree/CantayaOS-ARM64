@@ -1,0 +1,11 @@
+[package]
+name        = "cantaya-shared"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+
+[features]
+default = []
