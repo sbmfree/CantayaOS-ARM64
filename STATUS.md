@@ -2,12 +2,12 @@
 
 **Project:** CantayaOS by CantayaTech
 **Target:** AArch64, UEFI, QEMU `virt` with OVMF
-**Last verified:** 2026-09-20
+**Last verified:** 2026-09-21
 
 ## Current Milestone
 
-**Objective:** Maintain verified lifecycle controls, including process-wide
-termination of ready and typed-completion-blocked sibling threads.
+**Objective:** Maintain verified lifecycle controls for process and thread
+termination of ready and typed-completion-blocked threads.
 
 ## Verified Baseline For Planning
 
@@ -49,12 +49,12 @@ lives in [docs/architecture.md](docs/architecture.md).
 
 ## Recommended Next Milestone
 
-Prove `NtTerminateProcess(process_handle, status)` for an externally targeted
-process that has a sibling blocked in a typed finite or infinite wait. Preserve
-the existing scheduler tracking, cancel the sibling's completion registration
-before deferred reaping, and observe the final process status through the
-existing parent process handle. Do not add process groups, job objects,
-cross-process thread creation, or new lifecycle syscalls.
+Prove `NtTerminateThread(thread_handle, status)` for a non-current thread
+blocked in a typed finite or infinite wait. Preserve the existing scheduler
+tracking, cancel the target's completion registration before deferred reaping,
+and observe the final thread status through the existing typed thread handle.
+Do not add process groups, job objects, cross-process thread creation, or new
+lifecycle syscalls.
 
 ## Hard Constraints And Do Not Implement Yet
 
@@ -81,13 +81,14 @@ cross-process thread creation, or new lifecycle syscalls.
   cancels their registrations, signals each thread with the requested status,
   then terminates the caller so the process completes with that same status.
   Raw thread records remain deferred until another context is active.
-  `NtTerminateProcess(process_handle, status)` retains its existing external
-  target behavior. Do not add process groups, job objects, or cross-process
-  thread creation. `NtTerminateThread(thread_handle, status)` accepts only a
-  parent-owned typed thread handle; it rejects a target that is `CURRENT`,
-  removes a ready target or tracked typed-completion waiter, signals the
-  requested final status, and defers raw-stack reclamation. A repeated request
-  after completion succeeds without replacing the status.
+  `NtTerminateProcess(process_handle, status)` applies the same removal and
+  cancellation sequence to all ready and typed-completion-blocked threads in
+  its non-current target process. Do not add process groups, job objects, or
+  cross-process thread creation. `NtTerminateThread(thread_handle, status)`
+  accepts only a parent-owned typed thread handle; it rejects a target that is
+  `CURRENT`, removes a ready target or tracked typed-completion waiter, signals
+  the requested final status, and defers raw-stack reclamation. A repeated
+  request after completion succeeds without replacing the status.
 - `NtAllocateVirtual` accepts only the current-process pseudo-handle. It has
   automatic first-fit reuse and page-aligned fixed placement in the dynamic
   user-memory window, but no reservation/commit split or protection changes.
@@ -98,7 +99,7 @@ cross-process thread creation, or new lifecycle syscalls.
   security model remain scaffolding rather than finished operating-system
   services.
 - Remaining lifecycle work must retain the verified cancellation of blocked
-  typed waits while proving the external process-termination path.
+  typed waits while proving the external thread-termination path.
 - Security tokens/access checks, SMP, per-CPU scheduling, and GICv3 are
   deferred after lifecycle controls.
 

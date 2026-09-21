@@ -476,9 +476,15 @@ pub fn terminate_process(target: Arc<EProcess>, status: i32) -> Result<(), Termi
     }
 
     let pid = target.pid.0;
+    let cleared_wait_registrations = target_threads
+        .iter()
+        .filter(|thread_ptr| unsafe { (*from_tp(**thread_ptr)).wait_target.is_some() })
+        .count();
     for thread_ptr in &target_threads {
         finish_timed_wait(from_tp(*thread_ptr));
         clear_wait_registration(from_tp(*thread_ptr));
+    }
+    for thread_ptr in &target_threads {
         let thread = unsafe { &mut *from_tp(*thread_ptr) };
         let thread_waiters = thread.signal_exit(status);
         let process_waiters = thread.process.thread_exited(status);
@@ -493,6 +499,12 @@ pub fn terminate_process(target: Arc<EProcess>, status: i32) -> Result<(), Termi
         target_threads.len(),
         status as u32,
     );
+    if cleared_wait_registrations != 0 {
+        log::info!(
+            "Ps: external process termination cleared {} typed wait registration(s)",
+            cleared_wait_registrations,
+        );
+    }
     Ok(())
 }
 
@@ -649,14 +661,17 @@ pub fn terminate_current_process(status: i32) -> ! {
     }));
 
     let sibling_count = siblings.len();
-    let mut cleared_wait_registrations = 0;
+    let cleared_wait_registrations = siblings
+        .iter()
+        .filter(|thread_ptr| unsafe { (*from_tp(**thread_ptr)).wait_target.is_some() })
+        .count();
+    for thread_ptr in &siblings {
+        let thread = from_tp(*thread_ptr);
+        finish_timed_wait(thread);
+        clear_wait_registration(thread);
+    }
     for thread_ptr in siblings {
         let thread = from_tp(thread_ptr);
-        finish_timed_wait(thread);
-        if unsafe { (*thread).wait_target.is_some() } {
-            cleared_wait_registrations += 1;
-        }
-        clear_wait_registration(thread);
         let thread = unsafe { &mut *thread };
         let thread_waiters = thread.signal_exit(status);
         let process_waiters = thread.process.thread_exited(status);

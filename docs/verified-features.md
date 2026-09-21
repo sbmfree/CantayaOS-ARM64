@@ -71,9 +71,9 @@ next, read [STATUS.md](../STATUS.md).
 - `NtTerminateProcess` accepts a parent-owned process handle as well as the
   current-process pseudo-handle. External termination removes all non-current
   ready target threads and typed-completion-blocked target threads from their
-  scheduler-owned sets, signals thread and process completion with the
-  requested status, and defers stack reclamation until a different context is
-  active.
+  scheduler-owned sets, clears every selected typed-completion registration
+  before signaling any target completion, and defers stack reclamation until a
+  different context is active.
 - `NtTerminateProcess(-1, status)` follows the same bounded process-wide
   policy for the caller: ready and typed-completion-blocked same-process
   siblings are removed, their timer and retained typed-completion wait
@@ -89,6 +89,13 @@ next, read [STATUS.md](../STATUS.md).
   reports one cleared typed wait registration; the parent observes `0x61`
   through the returned typed process handle, closes it, and emits
   `[user-init] process-wide blocked wait termination validated`.
+- Each init process also launches the controlled child in external-target mode.
+  The parent waits ten scheduler ticks through the child's process handle, then
+  calls `NtTerminateProcess(handle, 0x62)`, waits again, and observes `0x62`.
+  The child has the same indefinitely blocked sibling; depending on scheduling,
+  its finite setup wait can also still be registered, so the kernel reports one
+  or more cleared typed wait registrations before reaping. The parent emits
+  `[user-init] external process blocked wait termination validated`.
 - Non-SVC synchronous exceptions from EL0 terminate only the faulting thread
   through the scheduler lifecycle path. Abort faults map to
   `STATUS_ACCESS_VIOLATION`, or `STATUS_STACK_OVERFLOW` for the mapped stack
@@ -159,8 +166,10 @@ kernel handles, and continued System, Thread-A, and Thread-B activity.
 It also requires two `[user-init] finite typed wait timeout validated` markers
 alongside two `[user-init] process-wide blocked wait termination validated`
 markers and two `Ps: current-process termination cleared 1 typed wait
-registration(s)` markers before the existing sibling-termination and
-process-wait flows continue.
+registration(s)` markers. It also requires two
+`[user-init] external process blocked wait termination validated` markers and
+two external process-termination cancellation markers before the existing
+sibling-termination and process-wait flows continue.
 
 This validates the QEMU `virt`/TCG path. It is not hardware certification or
 evidence of Windows application compatibility.

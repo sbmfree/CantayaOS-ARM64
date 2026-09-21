@@ -93,6 +93,11 @@ reaping. It then completes the caller and schedules away; because the caller
 is last in the process active-thread count, the retained `EProcess` completion
 object signals the same final status. This ordering keeps every kernel stack
 alive until a different context can reap it.
+External `NtTerminateProcess(process_handle, status)` applies the same two
+set removal and registration-cancellation pass to every non-current target
+thread before it signals any target completion or queues raw records for
+reaping. This prevents a target completion from waking another target through
+a stale typed-completion registration.
 `NtTerminateThread` accepts a parent-owned typed thread handle, rejects the
 current thread, and removes a ready target or a typed-completion-blocked target
 from the appropriate scheduler set before signaling its completion. A
