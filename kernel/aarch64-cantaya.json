@@ -12,7 +12,7 @@
   "linker-flavor":            "ld.lld",
   "linker-is-gnu":            true,
   "pre-link-args": {
-    "ld.lld": ["-T/Users/opwckpl/Documents/Projects/CantayaOS-ARM64/kernel/linker.ld"]
+    "ld.lld": ["-Tkernel/linker.ld"]
   },
   "panic-strategy":           "abort",
   "disable-redzone":          true,
