@@ -9,6 +9,9 @@ _start:
     mov x9, #0x5f
     cmp x1, x9
     b.eq process_exit_test_entry
+    mov x9, #0x60
+    cmp x1, x9
+    b.eq process_wait_target_entry
 
     // The kernel supplies this thread's initial user-stack top in x0. Keep a
     // cookie on that stack while timer IRQs force switches between processes.
@@ -391,6 +394,151 @@ _start:
     svc #0
     cbnz x0, 2f
 
+    // Terminate a sibling while it is blocked in a finite typed wait. Keep the
+    // original target live past the sibling's former deadline after reaping so
+    // a stale timeout or completion registration cannot wake freed state.
+    sub sp, sp, #64
+    str xzr, [sp]
+    movn x0, #0
+    mov x1, sp
+    mov x2, #0x1000
+    mov x8, #0x15
+    svc #0
+    cbnz x0, 2f
+    ldr x11, [sp]
+    cbz x11, 2f
+    str x11, [sp, #8]
+
+    add x12, x11, #0x1000
+    adr x0, finite_blocked_thread_wait_target_handle
+    adr x1, finite_blocked_thread_wait_target_entry
+    mov x2, x12
+    mov x8, #0x4e
+    svc #0
+    cbnz x0, 2f
+
+    str xzr, [sp, #16]
+    movn x0, #0
+    add x1, sp, #16
+    mov x2, #0x1000
+    mov x8, #0x15
+    svc #0
+    cbnz x0, 2f
+    ldr x11, [sp, #16]
+    cbz x11, 2f
+    str x11, [sp, #24]
+
+    add x12, x11, #0x1000
+    adr x0, finite_blocked_thread_waiter_handle
+    adr x1, finite_blocked_thread_waiting_sibling_entry
+    mov x2, x12
+    mov x8, #0x4e
+    svc #0
+    cbnz x0, 2f
+
+    adr x9, finite_blocked_thread_waiter_handle
+    ldr x13, [x9]
+    cbz x13, 2f
+    mov x14, #10
+    str x14, [sp, #32]
+    mov x0, x13
+    mov x1, xzr
+    add x2, sp, #32
+    mov x3, xzr
+    mov x8, #0x4
+    svc #0
+    mov x14, #0x102
+    cmp x0, x14
+    b.ne 2f
+
+    mov x0, x13
+    mov x1, #0x58
+    mov x8, #0x30
+    svc #0
+    cbnz x0, 2f
+
+    mov x0, x13
+    mov x1, xzr
+    mov x2, xzr
+    str xzr, [sp, #40]
+    add x3, sp, #40
+    mov x8, #0x4
+    svc #0
+    cbnz x0, 2f
+    ldr x14, [sp, #40]
+    mov x15, #0x58
+    cmp x14, x15
+    b.ne 2f
+
+    adr x9, finite_blocked_thread_wait_target_handle
+    ldr x13, [x9]
+    cbz x13, 2f
+    mov x14, #60
+    str x14, [sp, #32]
+    mov x0, x13
+    mov x1, xzr
+    add x2, sp, #32
+    mov x3, xzr
+    mov x8, #0x4
+    svc #0
+    mov x14, #0x102
+    cmp x0, x14
+    b.ne 2f
+
+    mov x0, x13
+    mov x1, #0x59
+    mov x8, #0x30
+    svc #0
+    cbnz x0, 2f
+
+    mov x0, x13
+    mov x1, xzr
+    mov x2, xzr
+    str xzr, [sp, #40]
+    add x3, sp, #40
+    mov x8, #0x4
+    svc #0
+    cbnz x0, 2f
+    ldr x14, [sp, #40]
+    mov x15, #0x59
+    cmp x14, x15
+    b.ne 2f
+
+    mov x0, x13
+    mov x8, #0xf
+    svc #0
+    cbnz x0, 2f
+
+    adr x9, finite_blocked_thread_waiter_handle
+    ldr x0, [x9]
+    mov x8, #0xf
+    svc #0
+    cbnz x0, 2f
+
+    ldr x11, [sp, #8]
+    movn x0, #0
+    mov x1, x11
+    mov x2, #0x1000
+    mov x8, #0x1b
+    svc #0
+    cbnz x0, 2f
+    ldr x11, [sp, #24]
+    movn x0, #0
+    mov x1, x11
+    mov x2, #0x1000
+    mov x8, #0x1b
+    svc #0
+    cbnz x0, 2f
+    add sp, sp, #64
+
+    movn x0, #0
+    adr x1, finite_blocked_thread_wait_message
+    adr x2, finite_blocked_thread_wait_message_end
+    sub x2, x2, x1
+    mov x8, #0x8
+    svc #0
+    cbnz x0, 2f
+
     movn x0, #0
     adr x1, terminate_thread_message
     adr x2, terminate_thread_message_end
@@ -527,6 +675,261 @@ _start:
     movn x0, #0
     adr x1, external_process_wait_message
     adr x2, external_process_wait_message_end
+    sub x2, x2, x1
+    mov x8, #0x8
+    svc #0
+    cbnz x0, 2f
+
+    // Terminate a sibling waiting indefinitely on a child process completion.
+    // A short finite wait on the live child reaps the sibling before the child
+    // completes, so a stale process-completion registration is observable.
+    sub sp, sp, #32
+    adr x0, process_wait_target_handle
+    mov x1, xzr
+    mov x2, #0x60
+    mov x8, #0x4c
+    svc #0
+    cbnz x0, 2f
+    adr x9, process_wait_target_handle
+    ldr x13, [x9]
+    cbz x13, 2f
+
+    str xzr, [sp]
+    movn x0, #0
+    mov x1, sp
+    mov x2, #0x1000
+    mov x8, #0x15
+    svc #0
+    cbnz x0, 2f
+    ldr x11, [sp]
+    cbz x11, 2f
+    str x11, [sp, #8]
+
+    add x12, x11, #0x1000
+    adr x0, process_waiter_handle
+    adr x1, process_wait_infinite_sibling_entry
+    mov x2, x12
+    mov x8, #0x4e
+    svc #0
+    cbnz x0, 2f
+
+    adr x9, process_waiter_handle
+    ldr x13, [x9]
+    cbz x13, 2f
+    mov x14, #10
+    str x14, [sp, #16]
+    mov x0, x13
+    mov x1, xzr
+    add x2, sp, #16
+    mov x3, xzr
+    mov x8, #0x4
+    svc #0
+    mov x14, #0x102
+    cmp x0, x14
+    b.ne 2f
+
+    mov x0, x13
+    mov x1, #0x5a
+    mov x8, #0x30
+    svc #0
+    cbnz x0, 2f
+
+    mov x0, x13
+    mov x1, xzr
+    mov x2, xzr
+    str xzr, [sp, #24]
+    add x3, sp, #24
+    mov x8, #0x4
+    svc #0
+    cbnz x0, 2f
+    ldr x14, [sp, #24]
+    mov x15, #0x5a
+    cmp x14, x15
+    b.ne 2f
+
+    adr x9, process_wait_target_handle
+    ldr x13, [x9]
+    cbz x13, 2f
+    mov x14, #2
+    str x14, [sp, #16]
+    mov x0, x13
+    mov x1, xzr
+    add x2, sp, #16
+    mov x3, xzr
+    mov x8, #0x4
+    svc #0
+    mov x14, #0x102
+    cmp x0, x14
+    b.ne 2f
+
+    mov x0, x13
+    mov x1, #0x5b
+    mov x8, #0x29
+    svc #0
+    cbnz x0, 2f
+
+    mov x0, x13
+    mov x1, xzr
+    mov x2, xzr
+    str xzr, [sp, #24]
+    add x3, sp, #24
+    mov x8, #0x4
+    svc #0
+    cbnz x0, 2f
+    ldr x14, [sp, #24]
+    mov x15, #0x5b
+    cmp x14, x15
+    b.ne 2f
+
+    mov x0, x13
+    mov x8, #0xf
+    svc #0
+    cbnz x0, 2f
+    adr x9, process_waiter_handle
+    ldr x0, [x9]
+    mov x8, #0xf
+    svc #0
+    cbnz x0, 2f
+
+    ldr x11, [sp, #8]
+    movn x0, #0
+    mov x1, x11
+    mov x2, #0x1000
+    mov x8, #0x1b
+    svc #0
+    cbnz x0, 2f
+    add sp, sp, #32
+
+    movn x0, #0
+    adr x1, process_wait_message
+    adr x2, process_wait_message_end
+    sub x2, x2, x1
+    mov x8, #0x8
+    svc #0
+    cbnz x0, 2f
+
+    // Repeat with a finite process-completion wait, then keep the child live
+    // beyond the killed sibling's former deadline before terminating it.
+    sub sp, sp, #32
+    adr x0, process_wait_target_handle
+    mov x1, xzr
+    mov x2, #0x60
+    mov x8, #0x4c
+    svc #0
+    cbnz x0, 2f
+    adr x9, process_wait_target_handle
+    ldr x13, [x9]
+    cbz x13, 2f
+
+    str xzr, [sp]
+    movn x0, #0
+    mov x1, sp
+    mov x2, #0x1000
+    mov x8, #0x15
+    svc #0
+    cbnz x0, 2f
+    ldr x11, [sp]
+    cbz x11, 2f
+    str x11, [sp, #8]
+
+    add x12, x11, #0x1000
+    adr x0, process_waiter_handle
+    adr x1, process_wait_finite_sibling_entry
+    mov x2, x12
+    mov x8, #0x4e
+    svc #0
+    cbnz x0, 2f
+
+    adr x9, process_waiter_handle
+    ldr x13, [x9]
+    cbz x13, 2f
+    mov x14, #10
+    str x14, [sp, #16]
+    mov x0, x13
+    mov x1, xzr
+    add x2, sp, #16
+    mov x3, xzr
+    mov x8, #0x4
+    svc #0
+    mov x14, #0x102
+    cmp x0, x14
+    b.ne 2f
+
+    mov x0, x13
+    mov x1, #0x5c
+    mov x8, #0x30
+    svc #0
+    cbnz x0, 2f
+
+    mov x0, x13
+    mov x1, xzr
+    mov x2, xzr
+    str xzr, [sp, #24]
+    add x3, sp, #24
+    mov x8, #0x4
+    svc #0
+    cbnz x0, 2f
+    ldr x14, [sp, #24]
+    mov x15, #0x5c
+    cmp x14, x15
+    b.ne 2f
+
+    adr x9, process_wait_target_handle
+    ldr x13, [x9]
+    cbz x13, 2f
+    mov x14, #60
+    str x14, [sp, #16]
+    mov x0, x13
+    mov x1, xzr
+    add x2, sp, #16
+    mov x3, xzr
+    mov x8, #0x4
+    svc #0
+    mov x14, #0x102
+    cmp x0, x14
+    b.ne 2f
+
+    mov x0, x13
+    mov x1, #0x5d
+    mov x8, #0x29
+    svc #0
+    cbnz x0, 2f
+
+    mov x0, x13
+    mov x1, xzr
+    mov x2, xzr
+    str xzr, [sp, #24]
+    add x3, sp, #24
+    mov x8, #0x4
+    svc #0
+    cbnz x0, 2f
+    ldr x14, [sp, #24]
+    mov x15, #0x5d
+    cmp x14, x15
+    b.ne 2f
+
+    mov x0, x13
+    mov x8, #0xf
+    svc #0
+    cbnz x0, 2f
+    adr x9, process_waiter_handle
+    ldr x0, [x9]
+    mov x8, #0xf
+    svc #0
+    cbnz x0, 2f
+
+    ldr x11, [sp, #8]
+    movn x0, #0
+    mov x1, x11
+    mov x2, #0x1000
+    mov x8, #0x1b
+    svc #0
+    cbnz x0, 2f
+    add sp, sp, #32
+
+    movn x0, #0
+    adr x1, finite_process_wait_message
+    adr x2, finite_process_wait_message_end
     sub x2, x2, x1
     mov x8, #0x8
     svc #0
@@ -707,6 +1110,61 @@ blocked_thread_waiting_sibling_entry:
 blocked_thread_waiting_sibling_failed:
     brk #0
 
+finite_blocked_thread_wait_target_entry:
+1:
+    nop
+    b 1b
+
+finite_blocked_thread_waiting_sibling_entry:
+    adr x9, finite_blocked_thread_wait_target_handle
+    ldr x0, [x9]
+    cbz x0, finite_blocked_thread_waiting_sibling_failed
+    sub sp, sp, #16
+    mov x9, #50
+    str x9, [sp]
+    mov x1, xzr
+    mov x2, sp
+    mov x3, xzr
+    mov x8, #0x4
+    svc #0
+
+finite_blocked_thread_waiting_sibling_failed:
+    brk #0
+
+process_wait_target_entry:
+1:
+    nop
+    b 1b
+
+process_wait_infinite_sibling_entry:
+    adr x9, process_wait_target_handle
+    ldr x0, [x9]
+    cbz x0, process_wait_infinite_sibling_failed
+    mov x1, xzr
+    mov x2, xzr
+    mov x3, xzr
+    mov x8, #0x4
+    svc #0
+
+process_wait_infinite_sibling_failed:
+    brk #0
+
+process_wait_finite_sibling_entry:
+    adr x9, process_wait_target_handle
+    ldr x0, [x9]
+    cbz x0, process_wait_finite_sibling_failed
+    sub sp, sp, #16
+    mov x9, #50
+    str x9, [sp]
+    mov x1, xzr
+    mov x2, sp
+    mov x3, xzr
+    mov x8, #0x4
+    svc #0
+
+process_wait_finite_sibling_failed:
+    brk #0
+
 .size _start, . - _start
 
 .section ".rodata", "a"
@@ -728,6 +1186,15 @@ finite_wait_message_end:
 blocked_thread_wait_message:
     .ascii "[user-init] blocked typed wait thread termination validated\n"
 blocked_thread_wait_message_end:
+finite_blocked_thread_wait_message:
+    .ascii "[user-init] finite blocked typed wait thread termination validated\n"
+finite_blocked_thread_wait_message_end:
+process_wait_message:
+    .ascii "[user-init] blocked process wait thread termination validated\n"
+process_wait_message_end:
+finite_process_wait_message:
+    .ascii "[user-init] finite blocked process wait thread termination validated\n"
+finite_process_wait_message_end:
 process_exit_wait_message:
     .ascii "[user-init] process-wide blocked wait termination validated\n"
 process_exit_wait_message_end:
@@ -750,4 +1217,12 @@ process_exit_waiter_handle:
 blocked_thread_wait_target_handle:
     .quad 0
 blocked_thread_waiter_handle:
+    .quad 0
+finite_blocked_thread_wait_target_handle:
+    .quad 0
+finite_blocked_thread_waiter_handle:
+    .quad 0
+process_wait_target_handle:
+    .quad 0
+process_waiter_handle:
     .quad 0

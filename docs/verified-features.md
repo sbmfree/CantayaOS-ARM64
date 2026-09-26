@@ -51,10 +51,12 @@ next, read [STATUS.md](../STATUS.md).
   the single-core queue, signals its requested final status, and defers raw
   stack reclamation. A repeated request after completion succeeds without
   replacing the original status. The boot-time scheduler checks current,
-  queued, and completed targets; both EL0 init processes also terminate a
-  sibling blocked indefinitely on a typed thread completion. That sibling is
-  reaped before its original target is completed, and the retained handle still
-  reports the requested `0x56` status without a stale wakeup.
+  queued, and completed targets; both EL0 init processes also terminate
+  siblings blocked on typed thread and process completions with infinite and
+  finite waits. Each finite waiter is reaped before its original target passes
+  the former deadline, and process waiters are reaped before their controlled
+  child process completes. Retained handles report requested statuses without
+  stale wakeups from completion or timeout tracking.
 - Terminated threads are deferred to the next active context before their
   `ETHREAD`, kernel stack, and final `EPROCESS` reference are destroyed. The
   process address space then releases its owned user pages and page tables.
@@ -162,6 +164,7 @@ file-object dispatches, matching I/O-manager IRP completions and mappings, two
 child markers, parent-validated `0x43` completion status, process exits,
 deferred thread reaps, typed process/thread wait validation, external typed
 thread termination of queued, completed, and typed-completion-blocked targets
+across typed thread and process completions with both infinite and finite waits
 from both init processes,
 current-target rejection in the scheduler, a `Ps: typed handle access rights
 validated` marker proving wait and terminate denials on deliberately restricted

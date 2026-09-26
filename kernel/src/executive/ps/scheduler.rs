@@ -562,8 +562,21 @@ pub fn terminate_thread(
         return result;
     };
 
-    let (thread_waiters, process_waiters, tid, pid, cleared_wait_registration) = unsafe {
+    let (
+        thread_waiters,
+        process_waiters,
+        tid,
+        pid,
+        cleared_wait_registration,
+        cleared_process_wait_registration,
+        cleared_timed_wait,
+    ) = unsafe {
         let cleared_wait_registration = (*from_tp(thread_ptr)).wait_target.is_some();
+        let cleared_process_wait_registration = matches!(
+            (*from_tp(thread_ptr)).wait_target.as_ref(),
+            Some(WaitTarget::Process(_))
+        );
+        let cleared_timed_wait = (*from_tp(thread_ptr)).wait_deadline.is_some();
         finish_timed_wait(from_tp(thread_ptr));
         clear_wait_registration(from_tp(thread_ptr));
         let thread = &mut *from_tp(thread_ptr);
@@ -575,6 +588,8 @@ pub fn terminate_thread(
             thread.tid.0,
             thread.process.pid.0,
             cleared_wait_registration,
+            cleared_process_wait_registration,
+            cleared_timed_wait,
         )
     };
     wake_waiters(thread_waiters);
@@ -589,6 +604,12 @@ pub fn terminate_thread(
     );
     if cleared_wait_registration {
         log::info!("Ps: external thread termination cleared typed wait registration");
+    }
+    if cleared_process_wait_registration {
+        log::info!("Ps: external thread termination cleared typed process wait registration");
+    }
+    if cleared_timed_wait {
+        log::info!("Ps: external thread termination cleared finite typed wait");
     }
     Ok(())
 }

@@ -6,8 +6,9 @@
 
 ## Current Milestone
 
-**Objective:** Preserve the verified lifecycle baseline while the next focused
-milestone is selected.
+**Objective:** Prove no stale scheduler registration survives a bounded mixed
+lifecycle workload that combines externally terminated typed thread and process
+waits.
 
 ## Verified Baseline For Planning
 
@@ -28,10 +29,12 @@ milestone is selected.
   rejects the current thread, removes a non-current queued target safely,
   signals its handle completion with the requested status, and treats an
   already-complete target as a successful no-op.
-- The smoke workload separately terminates a sibling blocked indefinitely on a
-  typed thread completion, reaps that raw record on a later context switch,
-  then completes the original wait target. The cancelled registration cannot
-  wake stale state, and the retained typed handle reports the requested status.
+- The smoke workload separately terminates siblings blocked on typed thread or
+  process completions with either an infinite wait or a finite timeout. It
+  reaps each raw record on a later context switch, lets every finite case pass
+  its former deadline, then completes the original thread or child process.
+  Cancelled registrations cannot wake stale state, and retained typed handles
+  report requested status.
 - Typed handle-table entries enforce distinct `WAIT` and `TERMINATE` rights
   before revealing their retained process or thread object. Current process
   and thread handles receive both lifecycle rights; denied rights return
@@ -53,19 +56,30 @@ lives in [docs/architecture.md](docs/architecture.md).
 
 ## Latest Verified Milestone
 
-`NtTerminateThread(thread_handle, status)` is verified for a non-current thread
-blocked in an infinite typed wait. The scheduler removes it from its tracked
-completion wait, cancels its retained registration before deferred reaping, and
+`NtTerminateThread(thread_handle, status)` is verified for non-current threads
+blocked in either infinite or finite typed thread or process waits. The
+scheduler removes each target from its tracked completion and, when present,
+timeout queues, cancels its retained registration before deferred reaping, and
 preserves the requested final status for observation through the existing typed
 thread handle. `make smoke` proves this independently in both initial EL0
 processes.
 
 ## Recommended Next Milestone
 
-No successor milestone is recorded. Select and document one before expanding
-implementation scope. Do not add process groups, job objects, cross-process
-thread creation, or new lifecycle syscalls without an explicit replacement
-milestone.
+Add a bounded mixed-lifecycle smoke workload that combines finite typed thread
+and process waits with external thread termination. It must prove no stale
+completion or timeout registration survives deferred reaping before the
+original targets complete. Do not add process groups, job objects,
+cross-process thread creation, or new lifecycle syscalls.
+
+### Follow-On Candidates
+
+- Repeat the mixed-lifecycle workload through multiple controlled rounds only
+  after the one-round proof is stable, retaining fixed bounds and deterministic
+  runtime markers.
+- Reassess any lifecycle API expansion only after those cancellation paths are
+  verified; retain the current narrow handle, wait, and process-creation
+  contracts until then.
 
 ## Hard Constraints And Do Not Implement Yet
 
@@ -110,13 +124,14 @@ milestone.
   security model remain scaffolding rather than finished operating-system
   services.
 - Remaining lifecycle work must retain the verified cancellation of blocked
-  typed waits while proving the external thread-termination path.
+  typed thread and process waits while proving mixed-lifecycle queue
+  cleanliness after deferred reaping.
 - Security tokens/access checks, SMP, per-CPU scheduling, and GICv3 are
   deferred after lifecycle controls.
 
 ## Current Blockers
 
-None recorded after typed-wait external-thread-termination verification.
+None recorded for the bounded mixed-lifecycle smoke milestone.
 
 ## Verification Requirements
 
