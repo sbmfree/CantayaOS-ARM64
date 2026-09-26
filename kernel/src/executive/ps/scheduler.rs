@@ -562,7 +562,8 @@ pub fn terminate_thread(
         return result;
     };
 
-    let (thread_waiters, process_waiters, tid, pid) = unsafe {
+    let (thread_waiters, process_waiters, tid, pid, cleared_wait_registration) = unsafe {
+        let cleared_wait_registration = (*from_tp(thread_ptr)).wait_target.is_some();
         finish_timed_wait(from_tp(thread_ptr));
         clear_wait_registration(from_tp(thread_ptr));
         let thread = &mut *from_tp(thread_ptr);
@@ -573,6 +574,7 @@ pub fn terminate_thread(
             process_waiters,
             thread.tid.0,
             thread.process.pid.0,
+            cleared_wait_registration,
         )
     };
     wake_waiters(thread_waiters);
@@ -585,6 +587,9 @@ pub fn terminate_thread(
         pid,
         status as u32,
     );
+    if cleared_wait_registration {
+        log::info!("Ps: external thread termination cleared typed wait registration");
+    }
     Ok(())
 }
 

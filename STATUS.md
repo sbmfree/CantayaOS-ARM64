@@ -2,12 +2,12 @@
 
 **Project:** CantayaOS by CantayaTech
 **Target:** AArch64, UEFI, QEMU `virt` with OVMF
-**Last verified:** 2026-09-21
+**Last verified:** 2026-09-26
 
 ## Current Milestone
 
-**Objective:** Maintain verified lifecycle controls for process and thread
-termination of ready and typed-completion-blocked threads.
+**Objective:** Preserve the verified lifecycle baseline while the next focused
+milestone is selected.
 
 ## Verified Baseline For Planning
 
@@ -28,6 +28,10 @@ termination of ready and typed-completion-blocked threads.
   rejects the current thread, removes a non-current queued target safely,
   signals its handle completion with the requested status, and treats an
   already-complete target as a successful no-op.
+- The smoke workload separately terminates a sibling blocked indefinitely on a
+  typed thread completion, reaps that raw record on a later context switch,
+  then completes the original wait target. The cancelled registration cannot
+  wake stale state, and the retained typed handle reports the requested status.
 - Typed handle-table entries enforce distinct `WAIT` and `TERMINATE` rights
   before revealing their retained process or thread object. Current process
   and thread handles receive both lifecycle rights; denied rights return
@@ -47,14 +51,21 @@ Detailed guarantees and validation evidence live in
 [docs/verified-features.md](docs/verified-features.md). Stable subsystem design
 lives in [docs/architecture.md](docs/architecture.md).
 
+## Latest Verified Milestone
+
+`NtTerminateThread(thread_handle, status)` is verified for a non-current thread
+blocked in an infinite typed wait. The scheduler removes it from its tracked
+completion wait, cancels its retained registration before deferred reaping, and
+preserves the requested final status for observation through the existing typed
+thread handle. `make smoke` proves this independently in both initial EL0
+processes.
+
 ## Recommended Next Milestone
 
-Prove `NtTerminateThread(thread_handle, status)` for a non-current thread
-blocked in a typed finite or infinite wait. Preserve the existing scheduler
-tracking, cancel the target's completion registration before deferred reaping,
-and observe the final thread status through the existing typed thread handle.
-Do not add process groups, job objects, cross-process thread creation, or new
-lifecycle syscalls.
+No successor milestone is recorded. Select and document one before expanding
+implementation scope. Do not add process groups, job objects, cross-process
+thread creation, or new lifecycle syscalls without an explicit replacement
+milestone.
 
 ## Hard Constraints And Do Not Implement Yet
 
@@ -105,7 +116,7 @@ lifecycle syscalls.
 
 ## Current Blockers
 
-None recorded for the current multi-thread process-exit milestone.
+None recorded after typed-wait external-thread-termination verification.
 
 ## Verification Requirements
 
