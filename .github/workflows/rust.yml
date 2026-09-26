@@ -11,12 +11,15 @@ env:
 
 jobs:
   build:
-
     runs-on: macos-latest
 
     steps:
     - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose
+    - name: Build bootloader
+      run: cargo build --verbose -p cantaya-boot --target aarch64-unknown-uefi
+    - name: Build kernel
+      run: cargo build --verbose -p cantaya-kernel --target kernel/aarch64-cantaya.json -Z json-target-spec -Z build-std=core,compiler_builtins,alloc -Z build-std-features=compiler-builtins-mem
+    - name: Build user images
+      run: |
+        cargo build --verbose -p cantaya-user-init --target user/aarch64-cantaya-user.json -Z json-target-spec -Z build-std=core,compiler_builtins -Z build-std-features=compiler-builtins-mem
+        cargo build --verbose -p cantaya-user-child --target user/aarch64-cantaya-user.json -Z json-target-spec -Z build-std=core,compiler_builtins -Z build-std-features=compiler-builtins-mem
