@@ -6,8 +6,8 @@
 
 ## Current Milestone
 
-**Objective:** Verify PL011 CRLF input runs one command with one following
-prompt in the existing QEMU smoke run.
+**Objective:** Verify an unknown terminal command reports an error and the
+next valid command still runs in the existing QEMU smoke run.
 
 ## Verified Baseline For Planning
 
@@ -44,6 +44,8 @@ prompt in the existing QEMU smoke run.
 - Smoke sends `info`, `uptime`, and `mem` through PL011 in response order. It
   checks the version text and the numeric uptime and free-memory formats,
   each followed by a prompt.
+- A PL011 `echo crlfprobe` terminated by CRLF returns one checked response and
+  one prompt; smoke rejects an extra prompt from a second blank command.
 - Current EL0 coverage includes validated user-memory copy-in/copy-out, virtual
   allocation and free, thread create/wait/close/terminate, process
   create/wait/close/terminate, and system-information query.
@@ -157,9 +159,9 @@ lives in [docs/architecture.md](docs/architecture.md).
 
 ## Latest Verified Milestone
 
-The headless QEMU smoke test now verifies `info`, `uptime`, and `mem` through
-PL011, including their distinct response formats and prompts. Keyboard input
-and every lifecycle count remain required.
+The headless QEMU smoke test now sends a PL011 CRLF-terminated command and
+requires its response without a duplicate prompt. Keyboard, status-command,
+and lifecycle assertions remain required.
 
 ## Latest Planning Decision
 
@@ -168,15 +170,16 @@ the closed-slot aliasing gap and selected issuance generations. Output-pointer
 prevalidation now has EL0 evidence for both creation calls; the later
 copy-out rollback branches remain source-reviewed. Entry and stack rejection,
 ordinary typed-wait preflight, and cross-page wait arguments have EL0 evidence.
-Terminal commands and editing are checked through keyboard and PL011 smoke
-input. PL011 CRLF suppression is implemented but not yet tested as an input
-pair; a stray LF must not run a second blank command.
+Terminal commands, editing, and PL011 CRLF suppression are checked through
+smoke input. The unknown-command branch and recovery are not yet exercised;
+the current smoke run rejects any unknown-command output.
 
 ## Recommended Next Milestone
 
-Send a unique PL011 `echo` command terminated by CRLF, require exactly one
-command response and no extra blank-command prompt, and retain all keyboard,
-status-command, and lifecycle checks. Keep this test-only.
+Send one deliberate unknown command through PL011, require exactly its error
+response, then send a valid `echo` command and require recovery. Adjust the
+smoke failure check to reject any additional unexpected unknown-command
+output. Retain the keyboard, status-command, CRLF, and lifecycle checks.
 
 ### Follow-On Candidates
 
@@ -232,7 +235,7 @@ status-command, and lifecycle checks. Keep this test-only.
 
 ## Current Blockers
 
-None recorded for bounded PL011 CRLF smoke automation.
+None recorded for bounded unknown-command recovery smoke automation.
 
 ## Verification Requirements
 

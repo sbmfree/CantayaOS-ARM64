@@ -26,11 +26,14 @@ CLEAR_FOLLOWUP_RESPONSE = "\nclearok\ncantaya> "
 INFO_RESPONSE = "CantayaOS v0.1.0 (AArch64, QEMU virt)\ncantaya> "
 UPTIME_RESPONSE = re.compile(r"\nUptime: \d+\.\d{2} seconds\ncantaya> ")
 MEM_RESPONSE = re.compile(r"\nFree physical memory: \d+ MiB \(\d+ pages\)\ncantaya> ")
+CRLF_RESPONSE = "\ncrlfprobe\ncantaya> "
+CRLF_EXTRA_PROMPT = CRLF_RESPONSE + "\ncantaya> "
 SERIAL_STEPS = (
     (KEYBOARD_EDIT_RESPONSE, b"echo serialprobe\r"),
     (CLEAR_FOLLOWUP_RESPONSE, b"info\r"),
     (INFO_RESPONSE, b"uptime\r"),
     (UPTIME_RESPONSE, b"mem\r"),
+    (MEM_RESPONSE, b"echo crlfprobe\r\n"),
 )
 KEYBOARD_STEPS = (
     (TERMINAL_PROMPT, ("h", "e", "l", "p", "ret")),
@@ -101,6 +104,7 @@ REQUIRED_MARKERS = (
     CLEAR_COMMAND_RESPONSE,
     CLEAR_FOLLOWUP_RESPONSE,
     INFO_RESPONSE,
+    CRLF_RESPONSE,
 )
 REQUIRED_PATTERNS = (
     ("uptime command response", UPTIME_RESPONSE),
@@ -157,6 +161,7 @@ FAILURE_MARKERS = (
     "[Thread-A] alive",
     "[Thread-B] alive",
     "Unknown command:",
+    CRLF_EXTRA_PROMPT,
 )
 
 
