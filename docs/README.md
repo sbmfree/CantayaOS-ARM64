@@ -9,6 +9,8 @@ Read the smallest document that answers the task at hand.
 - [verified-features.md](verified-features.md): detailed completed behavior,
   ownership rules, restrictions, and smoke-test evidence. Search for the
   subsystem or guarantee relevant to the task instead of reading it all.
+- [lifecycle-contract-review.md](lifecycle-contract-review.md): the handle
+  reuse finding, decision, and verification outcome.
 - Git history: historical sequence and rationale not needed for ordinary
   implementation. Consult it only when the current documents and source do
   not answer a historical question.

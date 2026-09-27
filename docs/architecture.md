@@ -107,6 +107,10 @@ Each handle-table entry also carries table-local lifecycle rights. `WAIT` is
 required for `NtWaitForSingleObject` and `TERMINATE` is required for external
 process or thread termination. The table checks the requested rights before it
 clones the retained typed object, so denied operations cannot observe it.
+Handles encode a process-local slot and issuance generation. Closing a handle
+advances the slot generation; a stale value cannot resolve or close a later
+object in that slot. Exhausted generations are not reissued, and zero and the
+current-process pseudo-handle are never real table handles.
 These masks are limited handle metadata, not security tokens, ACLs, inheritance,
 or a general object-permission system.
 

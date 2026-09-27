@@ -57,6 +57,17 @@ next, read [STATUS.md](../STATUS.md).
   the former deadline, and process waiters are reaped before their controlled
   child process completes. Retained handles report requested statuses without
   stale wakeups from completion or timeout tracking.
+- Each init process also runs two bounded mixed-lifecycle rounds. In each
+  round, a live thread and child process coexist with sibling threads holding
+  100-tick finite waits on their typed completions. The parent externally
+  terminates both waiters, verifies statuses `0x63` and `0x64`, and enters a
+  120-tick finite wait on the still-live thread target. That scheduling
+  interval reaps both raw waiter records and passes both former deadlines
+  before the parent completes the original thread and process with statuses
+  `0x65` and `0x66`. It closes the round's handles and frees its thread
+  stacks before starting the next round. Four aggregate
+  `[user-init] mixed finite lifecycle cancellation validated` markers prove
+  both init processes completed both rounds.
 - Terminated threads are deferred to the next active context before their
   `ETHREAD`, kernel stack, and final `EPROCESS` reference are destroyed. The
   process address space then releases its owned user pages and page tables.
@@ -67,6 +78,55 @@ next, read [STATUS.md](../STATUS.md).
   needed by the current lifecycle callers. A process is signaled only after its
   final active thread exits; waiters are then readied without freeing a running
   thread's stack.
+- Each typed handle encodes a process-local slot and issuance generation.
+  Closing it advances the slot generation before reuse; old values fail lookup
+  before type or access checks and cannot close the replacement. A boot-time
+  probe covers thread-to-thread, process-to-process, and both cross-type reuse
+  directions, including preserved access-mask denial after reuse. A separate
+  private-table boot probe seeds a closed slot just before `u32::MAX`, issues
+  and closes the last usable generation, then confirms the exhausted slot is
+  skipped in favor of a new slot. Old values cannot look up or close the new
+  handle, whose access rights remain intact; a further issuance still skips
+  the exhausted slot. In the second mixed-lifecycle round, both init processes
+  verify that saved old process and thread handles return
+  `STATUS_INVALID_HANDLE` from wait,
+  terminate, and close, then complete their live replacements successfully.
+  After the original round targets finish, each init process also closes the
+  completed process handle and reuses its slot for a live thread, then closes
+  the completed thread handle and reuses its slot for a live process. Each old
+  cross-type value fails wait, terminate, and close while both replacements
+  remain live; both replacements subsequently report their requested exit
+  statuses and are closed. The freed process slot is then issued to one more
+  live process and one more live thread in succession. At each step, every
+  retained older value fails both wait and close with `STATUS_INVALID_HANDLE`
+  while the newest object remains live. Each newest handle still reports its
+  requested exit status, and the extra thread stack is freed after its reuse.
+- A second private-table boot probe issues the same numeric slot/generation
+  value in two nonempty tables, one naming a thread with `WAIT` and the other
+  a process with `TERMINATE`. Lookups resolve each table's own object and
+  rights. Closing and reusing the value in one table leaves the other table's
+  object and rights unchanged.
+- A third private-table boot probe keeps one live `WAIT`-only entry while
+  checking null, the current-process pseudo-handle, zero and out-of-range
+  slots, and non-issued or exhausted generations. Every lookup returns
+  `Invalid` before access checks and every close fails; the live entry keeps
+  its positive `WAIT` access and denied `TERMINATE` access throughout.
+- Each init process then passes a live parent-owned process handle value to a
+  fresh selector-zero child with an empty handle table, and repeats with a
+  live parent-owned thread handle. Each child verifies that wait, both typed
+  termination calls, and close return `STATUS_INVALID_HANDLE` for that value,
+  then exits with a checked success status. The parent still terminates and
+  waits on each original target through its own handle, closes the handles,
+  and frees the thread stack. This proves the empty-child-table boundary; it
+  does not assert that equal numeric values in different nonempty tables name
+  the same object.
+- Each init process also spawns a controlled fresh process whose first thread
+  handle is numeric `1`. That process spawns a child whose own first thread
+  handle is also `1`. The child terminates, waits for, and closes its thread;
+  the parent then observes a finite timeout on its still-live thread before
+  terminating and waiting for it with a distinct status. Both thread stacks
+  are freed, and checked process statuses carry the result back to the init
+  processes. This exercises table-local resolution in two nonempty EL0 tables.
 - `NtCreateProcess` creates a fresh address space from a kernel-owned copy of
   the boot-validated `init.elf`. It validates a parent output pointer, returns
   a typed process handle only after copy-out succeeds, and then enqueues the
@@ -165,9 +225,10 @@ child markers, parent-validated `0x43` completion status, process exits,
 deferred thread reaps, typed process/thread wait validation, external typed
 thread termination of queued, completed, and typed-completion-blocked targets
 across typed thread and process completions with both infinite and finite waits
-from both init processes,
-current-target rejection in the scheduler, a `Ps: typed handle access rights
-validated` marker proving wait and terminate denials on deliberately restricted
+from both init processes, two bounded mixed finite thread/process cancellation
+rounds in each init process, current-target rejection in the scheduler, and a
+`Ps: typed handle access rights validated` marker proving wait and terminate
+denials on deliberately restricted
 kernel handles, and continued System, Thread-A, and Thread-B activity.
 It also requires two `[user-init] finite typed wait timeout validated` markers
 alongside two `[user-init] process-wide blocked wait termination validated`
@@ -175,7 +236,29 @@ markers and two `Ps: current-process termination cleared 1 typed wait
 registration(s)` markers. It also requires two
 `[user-init] external process blocked wait termination validated` markers and
 two external process-termination cancellation markers before the existing
-sibling-termination and process-wait flows continue.
+sibling-termination and process-wait flows continue. The mixed phase adds four
+`[user-init] mixed finite lifecycle cancellation validated` markers and raises
+the minimum external thread-termination evidence to sixteen typed-registration
+cancellations, eight process-wait cancellations, and twelve finite-timeout
+cancellations. It also requires a boot-time
+`Ps: stale typed handle reuse rejected` marker and two
+`[user-init] stale typed handles rejected after reuse` markers. The cross-type
+EL0 extension also requires two
+`[user-init] cross-type stale handles rejected after reuse` markers. The
+multi-generation EL0 extension also requires two
+`[user-init] multi-generation stale handles rejected after churn` markers.
+The process-local isolation phase requires four
+`[user-init] isolated child rejected parent handle` markers and two
+`[user-init] process-local parent handles validated` markers. These checks
+and the boot-time `Ps: exhausted typed handle slot skipped` marker passed
+`make smoke`, along with the boot-time numeric-collision marker. The EL0
+collision phase additionally requires two each of
+`[user-init] colliding child thread handle completed`,
+`[user-init] colliding parent thread handle remained live`, and
+`[user-init] EL0 numeric handle collision validated`. The earlier
+two-round milestone passed two consecutive smoke runs. The final private-table
+negative probe adds the boot-time `Ps: malformed typed handle values rejected`
+marker; `make smoke` passed with it and all prior markers.
 
 This validates the QEMU `virt`/TCG path. It is not hardware certification or
 evidence of Windows application compatibility.
