@@ -6,8 +6,8 @@
 
 ## Current Milestone
 
-**Objective:** Verify the built-in `clear` command resets the terminal and
-leaves a usable prompt in the existing QEMU smoke run.
+**Objective:** Verify the terminal's read-only `info`, `uptime`, and `mem`
+commands through the existing QEMU smoke run.
 
 ## Verified Baseline For Planning
 
@@ -39,6 +39,8 @@ leaves a usable prompt in the existing QEMU smoke run.
   restores lowercase `d`. Smoke retains the serial and lifecycle assertions.
 - A subsequent Ctrl-L probe checks the UART clear sequence, a redrawn
   unfinished `echo saved` line, and its successful response after Enter.
+- The built-in `clear` command also emits the clear sequence and restores a
+  prompt; a later `echo clearok` succeeds through the VirtIO keyboard.
 - Current EL0 coverage includes validated user-memory copy-in/copy-out, virtual
   allocation and free, thread create/wait/close/terminate, process
   create/wait/close/terminate, and system-information query.
@@ -152,9 +154,9 @@ lives in [docs/architecture.md](docs/architecture.md).
 
 ## Latest Verified Milestone
 
-The headless QEMU smoke test now proves Ctrl-L clears and redraws the prompt
-with an unfinished command intact; Enter then executes that command. It
-retains the keyboard, PL011 serial, and lifecycle checks.
+The headless QEMU smoke test now verifies the built-in `clear` command's
+screen-reset sequence and prompt, then completes a distinct keyboard `echo`
+command. It retains Ctrl-L restoration, PL011 serial, and lifecycle checks.
 
 ## Latest Planning Decision
 
@@ -163,16 +165,16 @@ the closed-slot aliasing gap and selected issuance generations. Output-pointer
 prevalidation now has EL0 evidence for both creation calls; the later
 copy-out rollback branches remain source-reviewed. Entry and stack rejection,
 ordinary typed-wait preflight, and cross-page wait arguments have EL0 evidence.
-Terminal `help`, keyboard editing, Shift/Caps Lock, Ctrl-L line restoration,
-and PL011 serial command input are now checked automatically. The built-in
-`clear` command has not yet been exercised by smoke input.
+Terminal `help`, keyboard editing, Shift/Caps Lock, Ctrl-L restoration, the
+`clear` command, and PL011 serial input are now checked automatically. The
+read-only status commands are the next untested terminal branch.
 
 ## Recommended Next Milestone
 
-Send the built-in `clear` command through the VirtIO keyboard, require the
-UART clear sequence and a restored prompt, then run a distinct `echo` command
-to prove the terminal remains usable. Retain every existing lifecycle and
-input assertion; keep this test-only.
+Send `info`, `uptime`, and `mem` through PL011 in sequence after the keyboard
+checks. Require their distinct response formats and a prompt after each;
+retain all prior input and lifecycle assertions. Keep this test-only and do
+not expose new system information interfaces.
 
 ### Follow-On Candidates
 
@@ -228,7 +230,7 @@ input assertion; keep this test-only.
 
 ## Current Blockers
 
-None recorded for bounded `clear` command smoke automation.
+None recorded for bounded terminal status-command smoke automation.
 
 ## Verification Requirements
 

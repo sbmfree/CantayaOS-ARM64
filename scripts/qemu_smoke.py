@@ -20,6 +20,8 @@ SERIAL_ECHO_RESPONSE = "\nserialprobe\ncantaya> "
 KEYBOARD_MODIFIER_RESPONSE = "\nAbCd\ncantaya> "
 CTRL_L_REDRAW = "\x1b[2J\x1b[Hcantaya> echo saved"
 CTRL_L_RESPONSE = "\nsaved\ncantaya> "
+CLEAR_COMMAND_RESPONSE = "clear\n\x1b[2J\x1b[Hcantaya> "
+CLEAR_FOLLOWUP_RESPONSE = "\nclearok\ncantaya> "
 KEYBOARD_STEPS = (
     (TERMINAL_PROMPT, ("h", "e", "l", "p", "ret")),
     (
@@ -43,6 +45,11 @@ KEYBOARD_STEPS = (
             "e", "c", "h", "o", "spc", "s", "a", "v", "e", "d",
             "ctrl-l", "ret",
         ),
+    ),
+    (CTRL_L_RESPONSE, ("c", "l", "e", "a", "r", "ret")),
+    (
+        CLEAR_COMMAND_RESPONSE,
+        ("e", "c", "h", "o", "spc", "c", "l", "e", "a", "r", "o", "k", "ret"),
     ),
 )
 
@@ -81,6 +88,8 @@ REQUIRED_MARKERS = (
     KEYBOARD_MODIFIER_RESPONSE,
     CTRL_L_REDRAW,
     CTRL_L_RESPONSE,
+    CLEAR_COMMAND_RESPONSE,
+    CLEAR_FOLLOWUP_RESPONSE,
 )
 REQUIRED_MARKER_COUNTS = {
     "Ps: reaped thread": 5,

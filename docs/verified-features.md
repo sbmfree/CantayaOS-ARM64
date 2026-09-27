@@ -20,11 +20,12 @@ next, read [STATUS.md](../STATUS.md).
   checks Shift and Caps Lock with the mixed-case `AbCd` response, including
   lowercase after Caps Lock is reset. A separate earlier QEMU injection ran
   `echo window` successfully. Smoke also checks Ctrl-L's clear sequence and
-  restored unfinished command. The periodic System heartbeat and Thread-A/B
-  liveness loops are disabled. After the validation programs exit, the
-  framebuffer clears boot logs, draws a CantayaOS version banner, and mirrors
-  terminal text in a lower pane that
-  scrolls without moving the banner. QEMU's OVMF GOP uses 1024x768 when that
+  restored unfinished command. The `clear` command emits the clear sequence
+  and leaves a prompt that runs `echo clearok`. The periodic System heartbeat
+  and Thread-A/B liveness loops are disabled. After the validation programs
+  exit, the framebuffer clears boot logs, draws a CantayaOS version banner,
+  and mirrors terminal text in a lower pane that scrolls without moving the
+  banner. QEMU's OVMF GOP uses 1024x768 when that
   mode is available; a QEMU screendump confirmed this resolution and the pane.
 - The UEFI bootloader loads `kernel.elf` and `init.elf`, exits boot services,
   and passes framebuffer, memory-map, kernel, and init-image information to
@@ -335,6 +336,8 @@ sends a PL011 serial `echo` command and checks its distinct response. It also
 requires the mixed-case `AbCd` response from Shift/Caps Lock keyboard events.
 Ctrl-L emits the UART clear sequence, redraws the unfinished `echo saved`
 input, and still produces its `saved` response after Enter.
+The built-in `clear` command emits the clear sequence and prompt, and the
+subsequent `echo clearok` command returns its checked payload.
 
 This validates the QEMU `virt`/TCG path. It is not hardware certification or
 evidence of Windows application compatibility.
