@@ -77,6 +77,18 @@ make smoke
 make clean
 ```
 
+After both boot validation programs finish, the QEMU window clears the boot
+logs and shows a CantayaOS banner, version, and terminal pane at the bottom.
+The bootloader selects a 1024x768 display mode when the firmware offers it.
+Click the QEMU window to type into the terminal using its VirtIO keyboard;
+the serial console in the shell that launched `make run` (`-serial stdio`)
+also accepts input. Commands and their output appear in both places. Type
+`help` for the built-in commands: `help`, `info`, `uptime`, `mem`,
+`echo <text>`, and `clear`. Backspace edits the line; Ctrl-U clears it, and Ctrl-L
+redraws the terminal screen. The current keyboard map covers US ASCII keys,
+Shift, Caps Lock, and these editing keys; input is polled by the kernel shell.
+The prompt accepts built-in commands, not arbitrary programs or file paths.
+
 `make smoke` is the current regression check. Its scope and expected runtime
 evidence are documented in [docs/verified-features.md](docs/verified-features.md).
 

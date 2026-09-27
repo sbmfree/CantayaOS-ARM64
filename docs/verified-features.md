@@ -6,6 +6,19 @@ next, read [STATUS.md](../STATUS.md).
 
 ## Boot, Hardware, And Kernel Foundation
 
+- The System kernel thread starts a bounded, line-oriented terminal after both
+  boot validation processes exit. It accepts printable ASCII, Enter,
+  Backspace, Ctrl-U, and Ctrl-L from PL011 serial or QEMU's VirtIO-MMIO
+  keyboard, then handles `help`, `info`, `uptime`, `mem`, `echo`, and `clear`
+  without a user-mode file or process interface. The keyboard driver polls
+  its event queue, decodes a US ASCII key map with Shift and Caps Lock, and
+  leaves LED feedback unimplemented. QEMU monitor key injection ran `help`
+  and `echo window` through the keyboard and produced both expected outputs.
+  The periodic System heartbeat and Thread-A/B liveness loops are disabled. After
+  the validation programs exit, the framebuffer clears boot logs, draws a
+  CantayaOS version banner, and mirrors terminal text in a lower pane that
+  scrolls without moving the banner. QEMU's OVMF GOP uses 1024x768 when that
+  mode is available; a QEMU screendump confirmed this resolution and the pane.
 - The UEFI bootloader loads `kernel.elf` and `init.elf`, exits boot services,
   and passes framebuffer, memory-map, kernel, and init-image information to
   the kernel.
@@ -252,7 +265,8 @@ from both init processes, two bounded mixed finite thread/process cancellation
 rounds in each init process, current-target rejection in the scheduler, and a
 `Ps: typed handle access rights validated` marker proving wait and terminate
 denials on deliberately restricted
-kernel handles, and continued System, Thread-A, and Thread-B activity.
+kernel handles, VirtIO keyboard initialization, and the terminal prompt after
+both init processes complete.
 It also requires two `[user-init] finite typed wait timeout validated` markers
 alongside two `[user-init] process-wide blocked wait termination validated`
 markers and two `Ps: current-process termination cleared 1 typed wait
@@ -290,6 +304,10 @@ passed with these and all prior checks.
 Typed-wait argument preflight adds two
 `[user-init] typed wait argument preflight validated` markers; `make smoke`
 passed with these and all prior checks.
+The terminal and keyboard change also passed `make smoke`; the smoke marker
+checks keyboard initialization, while a separate QEMU key-injection run
+verified actual command input. A QEMU framebuffer screendump confirmed the
+1024x768 mode and banner with the lower terminal pane.
 
 This validates the QEMU `virt`/TCG path. It is not hardware certification or
 evidence of Windows application compatibility.

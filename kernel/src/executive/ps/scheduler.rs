@@ -864,7 +864,7 @@ pub fn idle_loop() -> ! {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Kernel threads  (each explicitly yields every SLICE_TICKS cycles)
+// Kernel System thread
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn system_thread_main() {
@@ -882,12 +882,6 @@ fn system_thread_main() {
 
     log::info!("System thread running");
 
-    let proc = EProcess::new_kernel_process();
-    let t1 = EThread::new_kernel(proc.clone(), test_thread_a, 4);
-    let t2 = EThread::new_kernel(proc, test_thread_b, 4);
-    enqueue(t1);
-    enqueue(t2);
-    log::info!("Spawned Thread-A and Thread-B");
     validate_handle_access_rights();
     validate_stale_handle_reuse();
     validate_handle_generation_exhaustion();
@@ -896,18 +890,16 @@ fn system_thread_main() {
     validate_external_thread_termination();
     validate_handle_lifecycle();
 
-    let mut last = cntpct();
-    let mut beat: u64 = 0;
+    while !super::initial_processes_complete() {
+        yield_now();
+    }
+    // Let the scheduler reap the final EL0 thread before showing the prompt.
+    yield_now();
+    let mut shell = crate::shell::Shell::start();
+
     loop {
-        let now = cntpct();
-        // ~5 seconds at 62.5 MHz
-        if now.wrapping_sub(last) >= 312_500_000 {
-            beat += 1;
-            let ticks = TICK_COUNT.load(core::sync::atomic::Ordering::Relaxed);
-            log::info!("[System] heartbeat #{beat}  irq_ticks={ticks}");
-            last = now;
-        }
-        // Yield every time slice so Thread-A and Thread-B get CPU
+        shell.poll();
+        // Keep the serial console responsive without monopolising the CPU.
         yield_now();
     }
 }
@@ -1135,36 +1127,6 @@ fn validate_handle_lifecycle() {
 
 fn handle_test_thread() {
     terminate_current(0);
-}
-
-fn test_thread_a() {
-    let mut last = cntpct();
-    let mut beat: u64 = 0;
-    loop {
-        let now = cntpct();
-        if now.wrapping_sub(last) >= 375_000_000 {
-            // ~6 s
-            beat += 1;
-            log::info!("[Thread-A] alive #{beat}");
-            last = now;
-        }
-        yield_now();
-    }
-}
-
-fn test_thread_b() {
-    let mut last = cntpct();
-    let mut beat: u64 = 0;
-    loop {
-        let now = cntpct();
-        if now.wrapping_sub(last) >= 437_500_000 {
-            // ~7 s
-            beat += 1;
-            log::info!("[Thread-B] alive #{beat}");
-            last = now;
-        }
-        yield_now();
-    }
 }
 
 // End of scheduler.

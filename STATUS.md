@@ -21,7 +21,12 @@ regression.
   process/thread handles retain completion state safely across deferred thread
   reaping.
 - The two boot-loaded `init.elf` processes remain a context-switch validation
-  workload.
+  workload. After both exit, the System thread clears the framebuffer boot log
+  and starts a CantayaOS banner and lower terminal pane. The terminal accepts
+  built-in commands from either PL011 serial or QEMU's VirtIO-MMIO keyboard;
+  the periodic heartbeat and Thread-A/B demonstration loops are disabled.
+  QEMU uses 1024x768 GOP mode when available. Keyboard decoding currently
+  covers US ASCII, Shift, Caps Lock, Backspace, Enter, Ctrl-U, and Ctrl-L.
 - Current EL0 coverage includes validated user-memory copy-in/copy-out, virtual
   allocation and free, thread create/wait/close/terminate, process
   create/wait/close/terminate, and system-information query.
@@ -129,11 +134,14 @@ lives in [docs/architecture.md](docs/architecture.md).
 
 ## Latest Verified Milestone
 
-Typed wait arguments are validated for live thread and process handles. Both
-init processes check invalid timeout pointers and values, read-only and
-unmapped outputs, sentinel preservation for passed writable outputs, finite
-timeout, and subsequent checked completion. `make smoke` passed with two new
-markers and all existing lifecycle counts.
+After the existing two-process boot validation finishes, the framebuffer
+shows a CantayaOS version banner and a scrolling terminal. The kernel prompt
+accepts built-in commands from PL011 serial and QEMU's VirtIO-MMIO keyboard.
+QEMU key injection ran `help` and `echo window` successfully, and `make smoke`
+passed with the keyboard initialization and terminal startup markers while
+retaining the lifecycle checks. The previous milestone validated typed-wait
+arguments for live thread and process handles; its two smoke markers and
+lifecycle counts remain required.
 
 ## Latest Planning Decision
 
@@ -212,10 +220,12 @@ None recorded for bounded cross-page typed-wait verification.
 ## Verification Requirements
 
 Run `make smoke` for meaningful kernel, MMU, scheduler, syscall, process, or
-I/O changes. It is the regression check for the QEMU `virt`/TCG path and must
-demonstrate the required runtime markers; a successful compile alone is not
-completion. This is not hardware certification or evidence of Windows
-application compatibility.
+I/O changes, including keyboard input. It is the regression check for the QEMU
+`virt`/TCG path and must demonstrate the required runtime markers; a
+successful compile alone is not completion. For keyboard behavior changes,
+also inject actual QEMU key events and verify that a terminal command runs;
+smoke currently checks initialization and startup. This is not hardware
+certification or evidence of Windows application compatibility.
 
 ## Detailed References
 

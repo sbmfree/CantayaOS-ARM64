@@ -10,6 +10,15 @@ pub fn init() -> Option<FramebufferInfo> {
     let gop_handle = uefi::boot::get_handle_for_protocol::<GraphicsOutput>().ok()?;
     let mut gop = uefi::boot::open_protocol_exclusive::<GraphicsOutput>(gop_handle).ok()?;
 
+    // A modestly larger QEMU window than the firmware's default mode. Keep
+    // the current mode when this GOP does not advertise 1024x768.
+    if let Some(mode) = gop
+        .modes()
+        .find(|mode| mode.info().resolution() == (1024, 768))
+    {
+        let _ = gop.set_mode(&mode);
+    }
+
     let mode_info = gop.current_mode_info();
     let (width, height) = mode_info.resolution();
     // UEFI reports pixels per scanline; the handoff ABI uses bytes so that

@@ -3,9 +3,9 @@
 # Targets:
 #   make build     — compile bootloader (UEFI) + kernel (AArch64 ELF)
 #   make run       — launch QEMU with OVMF + built images
-#   make smoke     — boot QEMU headlessly and validate the MMU/scheduler path
+#   make smoke     — boot QEMU headlessly and validate the runtime markers
 #   make clean     — remove build artefacts
-#   make iso       — build a GPT ESP disk image (requires mtools)
+#   make iso       — build a FAT32 boot image (requires mtools)
 #
 # Requirements on macOS:
 #   brew install qemu mtools
@@ -32,15 +32,17 @@ OVMF_VARS  := $(CURDIR)/tools/edk2-arm-vars.fd
 
 # Disk image
 DISK_IMG   := $(BUILD_DIR)/cantaya.img
+DISK_IMG_NEW := $(DISK_IMG).new
 ESP_DIR    := $(BUILD_DIR)/esp
 
 QEMU       := qemu-system-aarch64
 QEMU_FLAGS := \
+  -name CantayaOS \
   -machine virt,highmem=on \
   -cpu cortex-a57 \
   -m 512M \
   -device ramfb \
-  -device virtio-keyboard-pci \
+  -device virtio-keyboard-device \
   -nic none \
   -drive if=pflash,format=raw,file=$(OVMF),readonly=on \
   -drive if=pflash,format=raw,file=$(OVMF_VARS) \
@@ -95,11 +97,12 @@ iso: build
 	# EFI shell startup script — auto-launches bootloader on shell fallback
 	printf 'FS0:\\EFI\\BOOT\\BOOTAA64.EFI\r\n' > $(ESP_DIR)/startup.nsh
 	# Create a 128 MiB FAT32 disk image
-	dd if=/dev/zero of=$(DISK_IMG) bs=1M count=128 2>/dev/null
-	mformat -i $(DISK_IMG) -F ::
-	mcopy -s -i $(DISK_IMG) $(ESP_DIR)/EFI ::/EFI
-	mcopy    -i $(DISK_IMG) $(USER_CHILD_ELF) ::/CHILD.ELF
-	mcopy    -i $(DISK_IMG) $(ESP_DIR)/startup.nsh ::/startup.nsh
+	dd if=/dev/zero of=$(DISK_IMG_NEW) bs=1M count=128 2>/dev/null
+	mformat -i $(DISK_IMG_NEW) -F ::
+	mcopy -s -i $(DISK_IMG_NEW) $(ESP_DIR)/EFI ::/EFI
+	mcopy    -i $(DISK_IMG_NEW) $(USER_CHILD_ELF) ::/CHILD.ELF
+	mcopy    -i $(DISK_IMG_NEW) $(ESP_DIR)/startup.nsh ::/startup.nsh
+	mv $(DISK_IMG_NEW) $(DISK_IMG)
 	@echo "==> Disk image: $(DISK_IMG)"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -118,7 +121,7 @@ smoke: iso
 # ─────────────────────────────────────────────────────────────────────────────
 clean:
 	$(CARGO) clean
-	rm -rf $(ESP_DIR) $(DISK_IMG)
+	rm -rf $(ESP_DIR) $(DISK_IMG) $(DISK_IMG_NEW)
 
 # ─────────────────────────────────────────────────────────────────────────────
 firmware-check:

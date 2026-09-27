@@ -15,6 +15,7 @@ mod arch;
 mod drivers;
 mod executive;
 mod hal;
+mod shell;
 mod syscall;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -125,10 +126,10 @@ pub extern "C" fn kernel_main_higher_half(boot_info_ptr: *const BootInfo) -> ! {
     // ── NT Executive subsystems ──────────────────────────────────────────
     executive::ob::init();
     drivers::virtio_blk::init();
+    drivers::keyboard::init();
     executive::io::init();
     executive::ps::init(boot_info);
     log::info!("NT Executive initialised");
-    // Keyboard: use VirtIO (-device virtio-keyboard-pci) — PL050 not on QEMU virt
 
     // ── Start scheduler ──────────────────────────────────────────────────
     // Keep IRQs masked until `idle_loop` performs its first context switch.

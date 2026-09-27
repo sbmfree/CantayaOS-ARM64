@@ -150,6 +150,11 @@ impl EProcess {
         }
     }
 
+    /// Read completion without registering a scheduler waiter.
+    pub fn exit_status(&self) -> Option<i32> {
+        self.completion.lock().exit_status
+    }
+
     /// Remove a timed-out scheduler thread before its next wait can begin.
     pub fn cancel_waiter(&self, waiter: usize) {
         self.completion

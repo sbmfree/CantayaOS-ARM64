@@ -1,21 +1,13 @@
 # Security Policy
 
-## Supported Versions
-
-Use this section to tell people about which versions of your project are
-currently being supported with security updates.
-
-| Version | Supported          |
-| ------- | ------------------ |
-| 5.1.x   | :white_check_mark: |
-| 5.0.x   | :x:                |
-| 4.0.x   | :white_check_mark: |
-| < 4.0   | :x:                |
+CantayaOS is an experimental operating system currently developed as version
+`0.1.0` for QEMU AArch64 `virt` with OVMF. There is no supported release branch
+or security update schedule. The kernel terminal and VirtIO keyboard are early
+development features.
 
 ## Reporting a Vulnerability
 
-Use this section to tell people how to report a vulnerability.
-
-Tell them where to go, how often they can expect to get an update on a
-reported vulnerability, what to expect if the vulnerability is accepted or
-declined, etc.
+If GitHub private vulnerability reporting is enabled for this repository, use
+it to contact the maintainers. Otherwise, open a repository issue with a brief
+impact summary and request a private contact channel before sharing exploit
+details.

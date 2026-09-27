@@ -106,6 +106,25 @@ impl Write for Uart {
 
 static UART_WRITER: Mutex<Uart> = Mutex::new(Uart);
 
+/// Write terminal text without letting an IRQ logger interrupt the UART lock.
+pub fn write_console(args: fmt::Arguments<'_>) {
+    let daif_saved: u64;
+    unsafe {
+        core::arch::asm!(
+            "mrs {0}, DAIF",
+            "msr DAIFSet, #0xf",
+            out(reg) daif_saved,
+        );
+    }
+
+    {
+        let mut writer = UART_WRITER.lock();
+        let _ = writer.write_fmt(args);
+    }
+
+    unsafe { core::arch::asm!("msr DAIF, {0}", in(reg) daif_saved) };
+}
+
 /// `log` crate backend — writes to PL011 UART and the framebuffer console.
 struct UartLogger;
 

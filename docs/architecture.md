@@ -12,14 +12,15 @@ UEFI firmware
   -> AArch64 kernel bootstrap and TTBR1 high-half execution
   -> HAL, drivers, and NT-style executive subsystems
   -> timer-scheduled EL0 processes with private TTBR0 roots
+  -> CantayaOS banner and kernel terminal after both init processes exit
 ```
 
 ## UEFI Boot And Handoff
 
 The UEFI bootloader is a PE32+ application. It initializes UEFI logging,
-obtains Graphics Output Protocol information when available, loads
+selects a 1024x768 Graphics Output Protocol mode when available, loads
 `\\EFI\\CantayaOS\\kernel.elf`, and retains
-`\\EFI\\CantayaOS\\init.elf` in loader-data memory for the first EL0 process.
+`\\EFI\\CantayaOS\\init.elf` in loader-data memory for the initial EL0 processes.
 It allocates the initial kernel stack, exits boot services, converts the UEFI
 memory map, and branches to the kernel with a pointer to `BootInfo` in `x0`.
 
@@ -55,7 +56,8 @@ NT-style executive:
 - `arch`: MMU setup, exception vectors, fault decoding, and context-switch
   support.
 - `hal`: PL011 UART, framebuffer console, GICv2, and ARM generic timer.
-- `drivers`: VirtIO block, FAT32, and keyboard support.
+- `drivers`: VirtIO-MMIO block and input keyboard devices, plus FAT32.
+- `shell`: the bounded kernel command prompt shown after boot validation.
 - `Ke`: spinlocks, mutexes, DPCs, and waiting primitives.
 - `Mm`: physical pages, heap, kernel virtual mappings, and user address-space
   ownership.
@@ -68,6 +70,23 @@ NT-style executive:
 The layering is intentional: process loading consumes the I/O-owned file
 object rather than FAT or VirtIO internals, while `Io` dispatches requests to a
 fixed driver/device path.
+
+## Boot Screen And Terminal
+
+The two initial EL0 `init.elf` processes run the boot validation workload.
+The System kernel thread waits for both processes to exit, then clears the
+framebuffer boot log and draws a CantayaOS banner with the kernel version.
+Terminal text occupies a scrolling pane below the banner. The prompt accepts
+bounded ASCII lines and runs `help`, `info`, `uptime`, `mem`, `echo`, and `clear`
+inside the kernel. Terminal output goes to both the framebuffer and PL011 UART.
+The recurring System heartbeat and Thread-A/B demonstration loops are disabled.
+
+QEMU attaches a modern VirtIO-MMIO keyboard. The driver scans the MMIO slots,
+negotiates VirtIO 1, checks the advertised key bitmap, and polls its event
+queue from the System thread. It decodes US ASCII keys plus Shift, Caps Lock,
+Backspace, Enter, Ctrl-U, and Ctrl-L. The status queue is present, but keyboard
+LED feedback is not implemented. PL011 serial input remains available through
+`-serial stdio`. The terminal runs built-in kernel commands only.
 
 ## Processes, Threads, And Lifetime
 
@@ -159,6 +178,8 @@ through the same ELF-validation path.
 The development test platform is QEMU `aarch64` `virt` with OVMF, using the
 `cortex-a57` TCG CPU model on macOS. `make smoke` builds the boot image and
 starts headless QEMU; its marker contract is the regression check for the MMU,
-EL0, scheduler, user-memory, process/thread, and fixed-image I/O path. It is
+EL0, scheduler, user-memory, process/thread, fixed-image I/O, terminal startup,
+and VirtIO keyboard initialization. A separate QEMU monitor key-injection
+check verified command input through the keyboard device. It is
 not hardware certification or a Windows-compatibility claim. See
 [verified-features.md](verified-features.md) for the complete evidence scope.

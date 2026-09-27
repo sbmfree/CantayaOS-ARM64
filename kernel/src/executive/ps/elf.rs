@@ -62,14 +62,16 @@ struct ParsedImage {
 /// Parse the UEFI-provided `init.elf` and create two independently mapped
 /// processes. Their distinct user stacks make timer-driven EL0 context
 /// restoration observable in the smoke workload.
-pub fn load_initial_processes(boot_info: &BootInfo) -> Result<[*mut EThread; 2], LoadError> {
+pub fn load_initial_processes(
+    boot_info: &BootInfo,
+) -> Result<[(Arc<EProcess>, *mut EThread); 2], LoadError> {
     let bytes = unsafe { init_elf_bytes(boot_info)? };
     let image = parse_image(bytes)?;
     *INITIAL_USER_IMAGE.lock() = Some(bytes.to_vec());
 
     Ok([
-        create_user_process(bytes, &image, INITIAL_USER_STACK_TOP, 0, "init ELF")?.1,
-        create_user_process(bytes, &image, SECOND_INITIAL_USER_STACK_TOP, 0, "init ELF")?.1,
+        create_user_process(bytes, &image, INITIAL_USER_STACK_TOP, 0, "init ELF")?,
+        create_user_process(bytes, &image, SECOND_INITIAL_USER_STACK_TOP, 0, "init ELF")?,
     ])
 }
 

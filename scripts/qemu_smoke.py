@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Boot CantayaOS headlessly and verify the baseline MMU/scheduler contract."""
+"""Boot CantayaOS headlessly and verify the runtime marker contract."""
 
 from __future__ import annotations
 
 import argparse
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -21,6 +22,7 @@ REQUIRED_MARKERS = (
     "AArch64 fault decoder probe passed",
     "Ps: init ELF mapped",
     "VirtIO block: live read-only boot disk ready",
+    "VirtIO keyboard: MMIO input ready",
     "Ps: external current-thread termination rejected",
     "Ps: external queued-thread termination validated",
     "Ps: external completed-thread termination validated",
@@ -37,9 +39,7 @@ REQUIRED_MARKERS = (
     "NtQuerySystemInfo copied validated EL0 output",
     "Ps: typed process and thread handle waits validated",
     "Ps: process pid=",
-    "[System] heartbeat",
-    "[Thread-A] alive",
-    "[Thread-B] alive",
+    "CantayaOS terminal. Type 'help' for commands.",
 )
 REQUIRED_MARKER_COUNTS = {
     "Ps: reaped thread": 5,
@@ -87,6 +87,9 @@ FAILURE_MARKERS = (
     "EL1 instruction abort",
     "EL1 data abort",
     "[user-init] ERROR failed creation started target",
+    "[System] heartbeat",
+    "[Thread-A] alive",
+    "[Thread-B] alive",
 )
 
 
@@ -101,16 +104,23 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="cantaya-smoke-") as directory:
         serial_log = Path(directory) / "serial.log"
+        # A visible `make run` may have these writable images open already.
+        # Give this headless guest private copies so the smoke test can boot.
+        vars_copy = Path(directory) / "ovmf-vars.fd"
+        image_copy = Path(directory) / "cantaya.img"
+        shutil.copyfile(args.ovmf_vars, vars_copy)
+        shutil.copyfile(args.image, image_copy)
         command = [
             args.qemu,
             "-machine", "virt,highmem=on",
             "-cpu", "cortex-a57",
             "-m", "512M",
             "-device", "ramfb",
+            "-device", "virtio-keyboard-device",
             "-nic", "none",
             "-drive", f"if=pflash,format=raw,file={args.ovmf},readonly=on",
-            "-drive", f"if=pflash,format=raw,file={args.ovmf_vars}",
-            "-drive", f"if=none,format=raw,file={args.image},id=cantaya-disk",
+            "-drive", f"if=pflash,format=raw,file={vars_copy}",
+            "-drive", f"if=none,format=raw,file={image_copy},id=cantaya-disk",
             "-global", "virtio-mmio.force-legacy=false",
             "-device", "virtio-blk-device,drive=cantaya-disk",
             "-serial", f"file:{serial_log}",
