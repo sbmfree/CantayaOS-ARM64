@@ -89,14 +89,14 @@ impl EProcess {
         self.handle_table.lock().close(handle)
     }
 
-    pub fn insert_process_handle(&self, target: Arc<EProcess>) -> Handle {
+    pub fn insert_process_handle(&self, target: Arc<EProcess>) -> Option<Handle> {
         self.handle_table.lock().insert(
             HandleObject::Process(target),
             HANDLE_ACCESS_WAIT | HANDLE_ACCESS_TERMINATE,
         )
     }
 
-    pub fn insert_thread_handle(&self, target: Arc<ThreadObject>) -> Handle {
+    pub fn insert_thread_handle(&self, target: Arc<ThreadObject>) -> Option<Handle> {
         self.insert_thread_handle_with_access(target, HANDLE_ACCESS_WAIT | HANDLE_ACCESS_TERMINATE)
     }
 
@@ -104,7 +104,7 @@ impl EProcess {
         &self,
         target: Arc<ThreadObject>,
         access: HandleAccess,
-    ) -> Handle {
+    ) -> Option<Handle> {
         self.handle_table
             .lock()
             .insert(HandleObject::Thread(target), access)

@@ -17,6 +17,7 @@ const STATUS_INVALID_PARAMETER: u64 = 0xC000_000D;
 const STATUS_ACCESS_DENIED: u64 = 0xC000_0022;
 const STATUS_TIMEOUT: u64 = 0x0000_0102;
 const STATUS_INVALID_IMAGE_FORMAT: u64 = 0xC000_007B;
+const STATUS_NO_MEMORY: u64 = 0xC000_0017;
 const MAX_WRITE_LENGTH: usize = 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,7 +134,10 @@ pub fn sys_create_process(regs: &mut SavedRegs) -> u64 {
         return STATUS_INVALID_IMAGE_FORMAT;
     };
     let pid = child.pid.0;
-    let handle = parent.insert_process_handle(child);
+    let Some(handle) = parent.insert_process_handle(child) else {
+        crate::executive::ps::scheduler::discard_unstarted(thread, STATUS_NO_MEMORY as i32);
+        return STATUS_NO_MEMORY;
+    };
     let output = handle.to_le_bytes();
     let copied_output = parent
         .with_user_address_space(|address_space| address_space.copy_to_user(regs.x[0], &output));
@@ -176,7 +180,10 @@ pub fn sys_create_thread(regs: &mut SavedRegs) -> u64 {
         crate::executive::ps::thread::EThread::new_user(process.clone(), regs.x[1], regs.x[2], 4);
     let object = unsafe { alloc::sync::Arc::clone(&(*thread).object) };
     let tid = object.tid.0;
-    let handle = process.insert_thread_handle(object);
+    let Some(handle) = process.insert_thread_handle(object) else {
+        crate::executive::ps::scheduler::discard_unstarted(thread, STATUS_NO_MEMORY as i32);
+        return STATUS_NO_MEMORY;
+    };
     let output = handle.to_le_bytes();
     let copied_output = process
         .with_user_address_space(|address_space| address_space.copy_to_user(regs.x[0], &output));
@@ -225,7 +232,7 @@ pub fn sys_allocate_virtual(regs: &mut SavedRegs) -> u64 {
     });
     let Some(Ok(base)) = allocated else {
         return if requested_base == 0 {
-            0xC000_0017 // STATUS_NO_MEMORY
+            STATUS_NO_MEMORY
         } else {
             STATUS_INVALID_PARAMETER
         };

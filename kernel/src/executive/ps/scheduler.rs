@@ -6,7 +6,8 @@ use super::thread::{
     WaitTarget,
 };
 use crate::executive::ob::handle::{
-    Handle, HandleLookupError, HandleObject, HANDLE_ACCESS_TERMINATE, HANDLE_ACCESS_WAIT,
+    Handle, HandleAccess, HandleLookupError, HandleObject, HANDLE_ACCESS_TERMINATE,
+    HANDLE_ACCESS_WAIT,
 };
 use alloc::{boxed::Box, collections::VecDeque, sync::Arc, vec::Vec};
 use spin::Mutex;
@@ -888,6 +889,10 @@ fn system_thread_main() {
     enqueue(t2);
     log::info!("Spawned Thread-A and Thread-B");
     validate_handle_access_rights();
+    validate_stale_handle_reuse();
+    validate_handle_generation_exhaustion();
+    validate_table_local_handle_collision();
+    validate_invalid_handle_values();
     validate_external_thread_termination();
     validate_handle_lifecycle();
 
@@ -912,8 +917,12 @@ fn validate_handle_access_rights() {
     let current = current_thread().expect("handle access validation needs System thread");
     let target = unsafe { Arc::clone(&(*current).object) };
 
-    let wait_only = owner.insert_thread_handle_with_access(target.clone(), HANDLE_ACCESS_WAIT);
-    let terminate_only = owner.insert_thread_handle_with_access(target, HANDLE_ACCESS_TERMINATE);
+    let wait_only = owner
+        .insert_thread_handle_with_access(target.clone(), HANDLE_ACCESS_WAIT)
+        .expect("handle access probe exhausted slots");
+    let terminate_only = owner
+        .insert_thread_handle_with_access(target, HANDLE_ACCESS_TERMINATE)
+        .expect("handle access probe exhausted slots");
 
     assert!(matches!(
         owner
@@ -931,13 +940,122 @@ fn validate_handle_access_rights() {
     log::info!("Ps: typed handle access rights validated");
 }
 
+fn assert_stale_handle_rejected(
+    owner: &Arc<EProcess>,
+    old: Handle,
+    replacement: Handle,
+    replacement_access: HandleAccess,
+) {
+    assert_eq!(old as u32, replacement as u32, "slot was not reused");
+    assert_ne!(old, replacement, "slot reused an old handle value");
+    assert!(matches!(
+        owner
+            .handle_table
+            .lock()
+            .lookup_with_access(old, replacement_access),
+        Err(HandleLookupError::Invalid)
+    ));
+    assert!(
+        !owner.close_handle(old),
+        "stale close removed a replacement"
+    );
+    assert!(owner
+        .handle_table
+        .lock()
+        .lookup_with_access(replacement, replacement_access)
+        .is_ok());
+}
+
+fn validate_stale_handle_reuse() {
+    let owner = current_process().expect("handle reuse probe needs the System process");
+    let current = current_thread().expect("handle reuse probe needs System thread");
+    let thread = unsafe { Arc::clone(&(*current).object) };
+
+    let old_thread = owner
+        .insert_thread_handle(thread.clone())
+        .expect("thread handle probe exhausted slots");
+    assert!(owner.close_handle(old_thread));
+    let replacement_thread = owner
+        .insert_thread_handle_with_access(thread.clone(), HANDLE_ACCESS_TERMINATE)
+        .expect("thread handle probe exhausted slots");
+    assert_stale_handle_rejected(
+        &owner,
+        old_thread,
+        replacement_thread,
+        HANDLE_ACCESS_TERMINATE,
+    );
+    assert!(matches!(
+        owner
+            .handle_table
+            .lock()
+            .lookup_with_access(replacement_thread, HANDLE_ACCESS_WAIT),
+        Err(HandleLookupError::AccessDenied)
+    ));
+    assert!(owner.close_handle(replacement_thread));
+
+    let old_process = owner
+        .insert_process_handle(EProcess::new_kernel_process())
+        .expect("process handle probe exhausted slots");
+    assert!(owner.close_handle(old_process));
+    let replacement_process = owner
+        .insert_process_handle(EProcess::new_kernel_process())
+        .expect("process handle probe exhausted slots");
+    assert_stale_handle_rejected(&owner, old_process, replacement_process, HANDLE_ACCESS_WAIT);
+    assert!(owner.close_handle(replacement_process));
+
+    let old_process = owner
+        .insert_process_handle(EProcess::new_kernel_process())
+        .expect("cross-type handle probe exhausted slots");
+    assert!(owner.close_handle(old_process));
+    let replacement_thread = owner
+        .insert_thread_handle(thread.clone())
+        .expect("cross-type handle probe exhausted slots");
+    assert_stale_handle_rejected(&owner, old_process, replacement_thread, HANDLE_ACCESS_WAIT);
+    assert!(owner.close_handle(replacement_thread));
+
+    let old_thread = owner
+        .insert_thread_handle(thread)
+        .expect("cross-type handle probe exhausted slots");
+    assert!(owner.close_handle(old_thread));
+    let replacement_process = owner
+        .insert_process_handle(EProcess::new_kernel_process())
+        .expect("cross-type handle probe exhausted slots");
+    assert_stale_handle_rejected(&owner, old_thread, replacement_process, HANDLE_ACCESS_WAIT);
+    assert!(owner.close_handle(replacement_process));
+    log::info!("Ps: stale typed handle reuse rejected");
+}
+
+fn validate_handle_generation_exhaustion() {
+    let current = current_thread().expect("generation probe needs System thread");
+    let object = HandleObject::Thread(unsafe { Arc::clone(&(*current).object) });
+    crate::executive::ob::handle::probe_generation_exhaustion(object);
+    log::info!("Ps: exhausted typed handle slot skipped");
+}
+
+fn validate_table_local_handle_collision() {
+    let current = current_thread().expect("collision probe needs System thread");
+    let thread = unsafe { Arc::clone(&(*current).object) };
+    let process = EProcess::new_kernel_process();
+    crate::executive::ob::handle::probe_table_local_collision(thread, process);
+    log::info!("Ps: process-local numeric handle collision validated");
+}
+
+fn validate_invalid_handle_values() {
+    let current = current_thread().expect("invalid-value probe needs System thread");
+    let object = HandleObject::Thread(unsafe { Arc::clone(&(*current).object) });
+    crate::executive::ob::handle::probe_invalid_handle_values(object);
+    log::info!("Ps: malformed typed handle values rejected");
+}
+
 fn validate_external_thread_termination() {
     const TERMINATED_STATUS: i32 = 0x54;
 
     let owner = current_process().expect("thread termination validation needs System process");
     let current = current_thread().expect("thread termination validation needs System thread");
 
-    let self_handle = owner.insert_thread_handle(unsafe { Arc::clone(&(*current).object) });
+    let self_handle = owner
+        .insert_thread_handle(unsafe { Arc::clone(&(*current).object) })
+        .expect("self-target probe exhausted slots");
     let self_target = match owner
         .handle_table
         .lock()
@@ -956,7 +1074,9 @@ fn validate_external_thread_termination() {
     let target_process = EProcess::new_kernel_process();
     let target_thread = EThread::new_kernel(target_process, externally_terminated_thread, 4);
     let target_object = unsafe { Arc::clone(&(*target_thread).object) };
-    let target_handle = owner.insert_thread_handle(target_object);
+    let target_handle = owner
+        .insert_thread_handle(target_object)
+        .expect("thread termination probe exhausted slots");
     enqueue(target_thread);
 
     let queued_target = match owner
@@ -998,8 +1118,12 @@ fn validate_handle_lifecycle() {
     let target_process = EProcess::new_kernel_process();
     let target_thread = EThread::new_kernel(target_process.clone(), handle_test_thread, 4);
     let target_object = unsafe { Arc::clone(&(*target_thread).object) };
-    let process_handle = owner.insert_process_handle(target_process);
-    let thread_handle = owner.insert_thread_handle(target_object);
+    let process_handle = owner
+        .insert_process_handle(target_process)
+        .expect("process wait probe exhausted slots");
+    let thread_handle = owner
+        .insert_thread_handle(target_object)
+        .expect("thread wait probe exhausted slots");
     enqueue(target_thread);
 
     assert_eq!(wait_for_handle(thread_handle), Ok(0));
