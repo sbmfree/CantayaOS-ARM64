@@ -1,4 +1,5 @@
 [toolchain]
-channel = "nightly"
+# build-std on the UEFI target must use the same tested nightly in CI and locally.
+channel = "nightly-2026-03-08"
 components = ["rust-src", "llvm-tools-preview", "rustfmt", "clippy"]
 targets = ["aarch64-unknown-uefi"]
