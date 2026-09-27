@@ -103,6 +103,13 @@ that its saved and replacement values refer to the same table slot.
     typed-wait argument preflight markers and prior checks. The validation
     order proves that these rejected calls do not register a waiter; EL0 does
     not directly count that state.
+14. Both init processes reject cross-page timeout and completion-output
+    pointers against live thread and process handles. The next page is
+    explicitly unmapped; the mapped-side and passed-output sentinels remain
+    unchanged. Valid finite waits still time out, and later infinite waits
+    return checked completion statuses. `make smoke` passed with two
+    cross-page markers and all prior lifecycle checks. The validation order,
+    rather than a direct EL0 count, establishes no rejected wait registration.
 
 The [hard constraints](../STATUS.md#hard-constraints-and-do-not-implement-yet)
 remain in force for later milestones.

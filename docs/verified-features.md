@@ -213,6 +213,16 @@ next, read [STATUS.md](../STATUS.md).
   copies each requested completion status. Source ordering shows that the
   rejected arguments cannot register a waiter; the smoke test does not count
   registration state directly for these failures.
+- Both init processes map a dedicated scratch page and explicitly unmap its
+  neighbor, then probe an eight-byte timeout input starting four bytes before
+  the boundary and a four-byte completion output starting two bytes before
+  it. Each returns `STATUS_ACCESS_VIOLATION`; the passed status output and
+  mapped-side sentinel remain unchanged. A subsequent valid finite wait
+  times out while the target is live, and an infinite wait returns its checked
+  termination status. Both typed handle kinds are closed, and the scratch
+  page and thread stack are released. Source validation order prevents the
+  rejected calls from registering a waiter; smoke checks their statuses and
+  sentinels, not the registration count directly.
 
 ## Syscall And User-Memory Guarantees
 
@@ -304,6 +314,11 @@ passed with these and all prior checks.
 Typed-wait argument preflight adds two
 `[user-init] typed wait argument preflight validated` markers; `make smoke`
 passed with these and all prior checks.
+Cross-page wait preflight adds two
+`[user-init] cross-page typed wait preflight validated` markers; `make smoke`
+passed with these, the previous lifecycle checks, and the keyboard and
+terminal startup markers.
+
 The terminal and keyboard change also passed `make smoke`; the smoke marker
 checks keyboard initialization, while a separate QEMU key-injection run
 verified actual command input. A QEMU framebuffer screendump confirmed the

@@ -1926,6 +1926,39 @@ mixed_lifecycle_done:
     cbnz x0, 2f
     ldr x23, [sp, #16]
     cbz x23, 2f
+
+    // Own a mapped page with a known-unmapped successor. Keep it separate
+    // from the spinning thread's stack, then probe ranges straddling its end.
+    movz x27, #3, lsl #32
+    str x27, [sp, #40]
+    movn x0, #0
+    add x1, sp, #40
+    mov x2, #0x1000
+    mov x8, #0x15
+    svc #0
+    cbnz x0, 2f
+    ldr x9, [sp, #40]
+    cmp x9, x27
+    b.ne 2f
+    add x28, x27, #0x1000
+    str x28, [sp, #40]
+    movn x0, #0
+    add x1, sp, #40
+    mov x2, #0x1000
+    mov x8, #0x15
+    svc #0
+    cbnz x0, 2f
+    ldr x9, [sp, #40]
+    cmp x9, x28
+    b.ne 2f
+    movn x0, #0
+    mov x1, x28
+    mov x2, #0x1000
+    mov x8, #0x1b
+    svc #0
+    cbnz x0, 2f
+    sub x28, x28, #4
+
     movz x19, #0x5
     movk x19, #0xc000, lsl #16
     movz x20, #0xd
@@ -1994,6 +2027,40 @@ wait_preflight_probe_ready:
     cmp x0, x19
     b.ne 2f
 
+    // An eight-byte timeout crosses the boundary after four mapped bytes.
+    movz w9, #0x5a5a
+    movk w9, #0x5a5a, lsl #16
+    str w9, [x28]
+    mov x0, x25
+    mov x1, xzr
+    mov x2, x28
+    add x3, sp, #32
+    mov x8, #0x4
+    svc #0
+    cmp x0, x19
+    b.ne 2f
+    ldr w9, [x28]
+    movz w10, #0x5a5a
+    movk w10, #0x5a5a, lsl #16
+    cmp w9, w10
+    b.ne 2f
+    ldr x9, [sp, #32]
+    cmp x9, #0x7e
+    b.ne 2f
+
+    // A four-byte completion output crosses after two mapped bytes.
+    mov x0, x25
+    mov x1, xzr
+    add x2, sp, #24
+    add x3, x28, #2
+    mov x8, #0x4
+    svc #0
+    cmp x0, x19
+    b.ne 2f
+    ldr w9, [x28]
+    cmp w9, w10
+    b.ne 2f
+
     mov x0, x25
     mov x1, xzr
     add x2, sp, #24
@@ -2042,6 +2109,12 @@ wait_preflight_terminate:
     b.ne wait_preflight_probe_loop
 
     movn x0, #0
+    mov x1, x27
+    mov x2, #0x1000
+    mov x8, #0x1b
+    svc #0
+    cbnz x0, 2f
+    movn x0, #0
     mov x1, x21
     mov x2, #0x1000
     mov x8, #0x1b
@@ -2051,6 +2124,13 @@ wait_preflight_terminate:
     movn x0, #0
     adr x1, wait_preflight_message
     adr x2, wait_preflight_message_end
+    sub x2, x2, x1
+    mov x8, #0x8
+    svc #0
+    cbnz x0, 2f
+    movn x0, #0
+    adr x1, cross_page_wait_message
+    adr x2, cross_page_wait_message_end
     sub x2, x2, x1
     mov x8, #0x8
     svc #0
@@ -2802,6 +2882,9 @@ create_thread_preflight_message_end:
 wait_preflight_message:
     .ascii "[user-init] typed wait argument preflight validated\n"
 wait_preflight_message_end:
+cross_page_wait_message:
+    .ascii "[user-init] cross-page typed wait preflight validated\n"
+cross_page_wait_message_end:
 unexpected_creation_message:
     .ascii "[user-init] ERROR failed creation started target\n"
 unexpected_creation_message_end:

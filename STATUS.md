@@ -6,9 +6,8 @@
 
 ## Current Milestone
 
-**Objective:** Verify cross-page typed-wait argument boundaries for live
-thread and process handles without changing the two-round EL0 lifecycle
-regression.
+**Objective:** Make the QEMU smoke test exercise actual VirtIO keyboard
+commands after terminal startup while retaining its lifecycle regression.
 
 ## Verified Baseline For Planning
 
@@ -112,6 +111,12 @@ regression.
   argument preflight markers. The no-registration property for invalid
   arguments follows the source validation order, rather than a direct EL0
   registration-count assertion.
+- Both init processes also reject an eight-byte timeout input and a four-byte
+  completion output that start in a mapped scratch page and cross into its
+  explicitly unmapped neighbor. The passed output and mapped-side sentinels
+  stay unchanged. Each live target subsequently times out on a valid finite
+  wait and completes with its checked status; the scratch page and thread
+  stack are released. Smoke requires two cross-page wait markers.
 - Each init process also starts two controlled fresh processes whose first
   thread handles both equal numeric `1`. The child completes and closes its
   own thread; the parent still sees a timeout on its live thread and then
@@ -134,32 +139,29 @@ lives in [docs/architecture.md](docs/architecture.md).
 
 ## Latest Verified Milestone
 
-After the existing two-process boot validation finishes, the framebuffer
-shows a CantayaOS version banner and a scrolling terminal. The kernel prompt
-accepts built-in commands from PL011 serial and QEMU's VirtIO-MMIO keyboard.
-QEMU key injection ran `help` and `echo window` successfully, and `make smoke`
-passed with the keyboard initialization and terminal startup markers while
-retaining the lifecycle checks. The previous milestone validated typed-wait
-arguments for live thread and process handles; its two smoke markers and
-lifecycle counts remain required.
+Cross-page timeout and completion-output ranges are rejected before waiting
+on live thread and process handles. Both init processes verify unchanged
+mapped-side and passed-output sentinels, then complete valid finite and
+infinite waits with checked statuses. `make smoke` passed with two new markers,
+the existing lifecycle counts, and the keyboard and terminal startup markers.
 
 ## Latest Planning Decision
 
 The [lifecycle contract review](docs/lifecycle-contract-review.md) identified
 the closed-slot aliasing gap and selected issuance generations. Output-pointer
 prevalidation now has EL0 evidence for both creation calls; the later
-copy-out rollback branches remain source-reviewed. Entry and stack rejection
-and ordinary typed-wait argument preflight have EL0 evidence. Cross-page wait
-arguments are the next bounded case.
+copy-out rollback branches remain source-reviewed. Entry and stack rejection,
+ordinary typed-wait preflight, and cross-page wait arguments have EL0 evidence.
+Terminal command input has been checked by separate QEMU key injection, but
+not yet by the automated smoke test.
 
 ## Recommended Next Milestone
 
-With live thread and process handles, exercise `NtWaitForSingleObject` with
-timeout and completion-output ranges that begin in a mapped page but cross
-into an unmapped page. Require `STATUS_ACCESS_VIOLATION` and unchanged
-sentinels, then complete both targets through valid waits. Keep the
-non-alertable timeout bounds, process-local handles, and two-round smoke
-regression unchanged.
+Extend `make smoke` to send a short command through QEMU's VirtIO keyboard
+after the terminal prompt appears. Require the command's response in the
+serial log, alongside all existing lifecycle markers and counts. Keep this
+test-only: do not broaden the terminal command set or change the kernel input
+model. Use private QEMU state so concurrent `make run` remains unaffected.
 
 ### Follow-On Candidates
 
@@ -215,7 +217,7 @@ regression unchanged.
 
 ## Current Blockers
 
-None recorded for bounded cross-page typed-wait verification.
+None recorded for bounded keyboard-command smoke automation.
 
 ## Verification Requirements
 
