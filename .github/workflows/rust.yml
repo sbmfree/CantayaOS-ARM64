@@ -17,7 +17,7 @@ jobs:
     runs-on: macos-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Build bootloader
       run: cargo build --verbose -p cantaya-boot --target aarch64-unknown-uefi
     - name: Build kernel
@@ -32,7 +32,7 @@ jobs:
     timeout-minutes: 20
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Install QEMU and image tools
       run: |
         sudo apt-get update

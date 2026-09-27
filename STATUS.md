@@ -177,16 +177,17 @@ prevalidation now has EL0 evidence for both creation calls; the later
 copy-out rollback branches remain source-reviewed. Entry and stack rejection,
 ordinary typed-wait preflight, and cross-page wait arguments have EL0 evidence.
 Terminal commands, editing, PL011 CRLF suppression, unknown-command recovery,
-and the fixed input-line capacity are checked through smoke input. A CI job now
-boots QEMU with Ubuntu's AArch64 UEFI firmware; its first remote run still
-needs confirmation.
+and the fixed input-line capacity are checked through smoke input. GitHub
+Actions now builds the project and passes the same headless QEMU smoke test on
+Ubuntu with AArch64 UEFI firmware. The tested nightly is pinned to avoid a
+newer toolchain's UEFI linker regression.
 
 ## Recommended Next Milestone
 
-Confirm the new CI QEMU smoke job passes, then design a bounded EL0 console
-endpoint with explicit handle semantics and validated user buffers. Begin with
-output, then add input without letting the kernel shell consume the same
-bytes. Keep the fixed image selectors and all existing lifecycle checks.
+Design a bounded EL0 console endpoint with explicit handle semantics and
+validated user buffers. Begin with output, then add input without letting the
+kernel shell consume the same bytes. Keep the fixed image selectors and all
+existing lifecycle checks.
 
 ### Follow-On Candidates
 
@@ -242,7 +243,7 @@ bytes. Keep the fixed image selectors and all existing lifecycle checks.
 
 ## Current Blockers
 
-None recorded for local smoke. The first Linux CI smoke run is not yet verified.
+None recorded for local or CI smoke.
 
 ## Verification Requirements
 
