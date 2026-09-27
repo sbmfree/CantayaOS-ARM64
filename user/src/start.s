@@ -1895,6 +1895,167 @@ mixed_lifecycle_done:
     svc #0
     cbnz x0, 2f
 
+    // Probe wait arguments on both live completion types. Invalid arguments
+    // must fail before registering a waiter or touching the status output.
+    sub sp, sp, #48
+    str xzr, [sp]
+    movn x0, #0
+    mov x1, sp
+    mov x2, #0x1000
+    mov x8, #0x15
+    svc #0
+    cbnz x0, 2f
+    ldr x21, [sp]
+    cbz x21, 2f
+    add x9, x21, #0x1000
+    str xzr, [sp, #8]
+    add x0, sp, #8
+    adr x1, mixed_thread_wait_target_entry
+    mov x2, x9
+    mov x8, #0x4e
+    svc #0
+    cbnz x0, 2f
+    ldr x22, [sp, #8]
+    cbz x22, 2f
+    str xzr, [sp, #16]
+    add x0, sp, #16
+    mov x1, xzr
+    mov x2, #0x60
+    mov x8, #0x4c
+    svc #0
+    cbnz x0, 2f
+    ldr x23, [sp, #16]
+    cbz x23, 2f
+    movz x19, #0x5
+    movk x19, #0xc000, lsl #16
+    movz x20, #0xd
+    movk x20, #0xc000, lsl #16
+    mov x24, xzr
+
+wait_preflight_probe_loop:
+    mov x25, x22
+    mov x26, #0x88
+    cbz x24, wait_preflight_probe_ready
+    mov x25, x23
+    mov x26, #0x89
+wait_preflight_probe_ready:
+    mov x9, #0x7e
+    str x9, [sp, #32]
+    mov x9, #2
+    str x9, [sp, #24]
+
+    mov x0, x25
+    mov x1, xzr
+    mov x2, #1
+    add x3, sp, #32
+    mov x8, #0x4
+    svc #0
+    cmp x0, x19
+    b.ne 2f
+    ldr x9, [sp, #32]
+    cmp x9, #0x7e
+    b.ne 2f
+
+    str xzr, [sp, #24]
+    mov x0, x25
+    mov x1, xzr
+    add x2, sp, #24
+    add x3, sp, #32
+    mov x8, #0x4
+    svc #0
+    cmp x0, x20
+    b.ne 2f
+    ldr x9, [sp, #32]
+    cmp x9, #0x7e
+    b.ne 2f
+
+    mov x9, #1001
+    str x9, [sp, #24]
+    mov x0, x25
+    mov x1, xzr
+    add x2, sp, #24
+    add x3, sp, #32
+    mov x8, #0x4
+    svc #0
+    cmp x0, x20
+    b.ne 2f
+    ldr x9, [sp, #32]
+    cmp x9, #0x7e
+    b.ne 2f
+
+    mov x9, #2
+    str x9, [sp, #24]
+    mov x0, x25
+    mov x1, xzr
+    add x2, sp, #24
+    adr x3, wait_preflight_message
+    mov x8, #0x4
+    svc #0
+    cmp x0, x19
+    b.ne 2f
+
+    mov x0, x25
+    mov x1, xzr
+    add x2, sp, #24
+    mov x3, #1
+    mov x8, #0x4
+    svc #0
+    cmp x0, x19
+    b.ne 2f
+
+    mov x0, x25
+    mov x1, xzr
+    add x2, sp, #24
+    add x3, sp, #32
+    mov x8, #0x4
+    svc #0
+    cmp x0, #0x102
+    b.ne 2f
+    ldr x9, [sp, #32]
+    cmp x9, #0x7e
+    b.ne 2f
+
+    mov x0, x25
+    mov x1, x26
+    mov x8, #0x30
+    cbz x24, wait_preflight_terminate
+    mov x8, #0x29
+wait_preflight_terminate:
+    svc #0
+    cbnz x0, 2f
+    mov x0, x25
+    mov x1, xzr
+    mov x2, xzr
+    add x3, sp, #32
+    mov x8, #0x4
+    svc #0
+    cbnz x0, 2f
+    ldr x9, [sp, #32]
+    cmp x9, x26
+    b.ne 2f
+    mov x0, x25
+    mov x8, #0xf
+    svc #0
+    cbnz x0, 2f
+    add x24, x24, #1
+    cmp x24, #2
+    b.ne wait_preflight_probe_loop
+
+    movn x0, #0
+    mov x1, x21
+    mov x2, #0x1000
+    mov x8, #0x1b
+    svc #0
+    cbnz x0, 2f
+    add sp, sp, #48
+    movn x0, #0
+    adr x1, wait_preflight_message
+    adr x2, wait_preflight_message_end
+    sub x2, x2, x1
+    mov x8, #0x8
+    svc #0
+    cbnz x0, 2f
+
     // A fresh selector-zero child has its own empty handle table. Give it a
     // live process value, then a live thread value; in each case its failed
     // operations must leave the parent's target usable.
@@ -2638,6 +2799,9 @@ create_output_failure_message_end:
 create_thread_preflight_message:
     .ascii "[user-init] thread entry and stack preflight validated\n"
 create_thread_preflight_message_end:
+wait_preflight_message:
+    .ascii "[user-init] typed wait argument preflight validated\n"
+wait_preflight_message_end:
 unexpected_creation_message:
     .ascii "[user-init] ERROR failed creation started target\n"
 unexpected_creation_message_end:

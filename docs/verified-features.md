@@ -191,6 +191,15 @@ next, read [STATUS.md](../STATUS.md).
   `0x43` exit status through its process handle, closes the handle, and then
   continues normally. Controlled EL0 fault status handling remains implemented
   separately.
+- Both init processes probe live typed thread and process handles with an
+  unmapped timeout pointer, zero and 1,001-tick values, and read-only or
+  unmapped completion outputs. Rejected timeout arguments leave their passed
+  writable output sentinel unchanged; unwritable outputs return
+  `STATUS_ACCESS_VIOLATION`. A valid two-tick wait returns `STATUS_TIMEOUT`
+  without writing its output; after termination, an infinite wait
+  copies each requested completion status. Source ordering shows that the
+  rejected arguments cannot register a waiter; the smoke test does not count
+  registration state directly for these failures.
 
 ## Syscall And User-Memory Guarantees
 
@@ -277,6 +286,9 @@ marker. Output-pointer validation adds two
 failure-only target marker; `make smoke` passed with these and all prior checks.
 Thread entry and stack preflight adds two
 `[user-init] thread entry and stack preflight validated` markers; `make smoke`
+passed with these and all prior checks.
+Typed-wait argument preflight adds two
+`[user-init] typed wait argument preflight validated` markers; `make smoke`
 passed with these and all prior checks.
 
 This validates the QEMU `virt`/TCG path. It is not hardware certification or

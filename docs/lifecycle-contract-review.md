@@ -95,6 +95,14 @@ that its saved and replacement values refer to the same table slot.
     sentinel remains unchanged, and the next valid creation receives the
     expected generation and completes with a checked status. `make smoke`
     passed with two entry-and-stack preflight markers and prior checks.
+13. Both init processes reject invalid timeout pointers and values and
+    unwritable completion outputs while waiting on live thread and process
+    handles. Rejected timeout arguments preserve their passed writable output
+    sentinels; valid finite waits time out, and later infinite waits report
+    checked termination statuses. The `make smoke` run passed with two
+    typed-wait argument preflight markers and prior checks. The validation
+    order proves that these rejected calls do not register a waiter; EL0 does
+    not directly count that state.
 
 The [hard constraints](../STATUS.md#hard-constraints-and-do-not-implement-yet)
 remain in force for later milestones.

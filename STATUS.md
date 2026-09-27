@@ -6,9 +6,9 @@
 
 ## Current Milestone
 
-**Objective:** Verify typed wait input preflight for live thread and process
-handles without disturbing completion registration or the two-round EL0
-lifecycle regression.
+**Objective:** Verify cross-page typed-wait argument boundaries for live
+thread and process handles without changing the two-round EL0 lifecycle
+regression.
 
 ## Verified Baseline For Planning
 
@@ -98,6 +98,15 @@ lifecycle regression.
   stays unchanged; the next valid thread receives the exact next handle
   generation, completes with a checked status, and releases its stack. Smoke
   requires two entry-and-stack preflight markers.
+- Both init processes reject invalid timeout pointers, zero and out-of-range
+  timeout values, and read-only or unmapped completion outputs for live thread
+  and process handles. Bad timeout arguments preserve their passed output
+  sentinel; bad output pointers return `STATUS_ACCESS_VIOLATION`. A valid
+  two-tick wait times out without writing its output; termination followed by an
+  infinite wait returns each checked status. Smoke requires two typed-wait
+  argument preflight markers. The no-registration property for invalid
+  arguments follows the source validation order, rather than a direct EL0
+  registration-count assertion.
 - Each init process also starts two controlled fresh processes whose first
   thread handles both equal numeric `1`. The child completes and closes its
   own thread; the parent still sees a timeout on its live thread and then
@@ -120,11 +129,11 @@ lives in [docs/architecture.md](docs/architecture.md).
 
 ## Latest Verified Milestone
 
-Invalid thread entries and stack tops are rejected before handle publication
-or target start. Both init processes test a mapped non-executable entry and
-misaligned and unmapped stack tops, retain an output sentinel, and complete a
-valid thread with the precisely predicted next handle. `make smoke` passed
-with two new markers and all existing lifecycle counts.
+Typed wait arguments are validated for live thread and process handles. Both
+init processes check invalid timeout pointers and values, read-only and
+unmapped outputs, sentinel preservation for passed writable outputs, finite
+timeout, and subsequent checked completion. `make smoke` passed with two new
+markers and all existing lifecycle counts.
 
 ## Latest Planning Decision
 
@@ -132,17 +141,17 @@ The [lifecycle contract review](docs/lifecycle-contract-review.md) identified
 the closed-slot aliasing gap and selected issuance generations. Output-pointer
 prevalidation now has EL0 evidence for both creation calls; the later
 copy-out rollback branches remain source-reviewed. Entry and stack rejection
-also has EL0 evidence. Typed wait preflight is the next bounded case.
+and ordinary typed-wait argument preflight have EL0 evidence. Cross-page wait
+arguments are the next bounded case.
 
 ## Recommended Next Milestone
 
-With live thread and process handles, call `NtWaitForSingleObject` using an
-invalid timeout pointer or value and an unwritable completion-status output.
-Require the existing error statuses, unchanged output sentinel, and no stale
-wait registration. Then require a finite timeout without an output write,
-terminate each target, and observe its checked completion status through a
-valid output. Require markers from both init processes and preserve the
-two-round smoke regression. Keep non-alertable wait and timeout bounds.
+With live thread and process handles, exercise `NtWaitForSingleObject` with
+timeout and completion-output ranges that begin in a mapped page but cross
+into an unmapped page. Require `STATUS_ACCESS_VIOLATION` and unchanged
+sentinels, then complete both targets through valid waits. Keep the
+non-alertable timeout bounds, process-local handles, and two-round smoke
+regression unchanged.
 
 ### Follow-On Candidates
 
@@ -198,7 +207,7 @@ two-round smoke regression. Keep non-alertable wait and timeout bounds.
 
 ## Current Blockers
 
-None recorded for bounded typed wait preflight verification.
+None recorded for bounded cross-page typed-wait verification.
 
 ## Verification Requirements
 
