@@ -25,8 +25,10 @@ next, read [STATUS.md](../STATUS.md).
   `uptime`, and `mem` via PL011 and checks their version and numeric response
   formats. A CRLF-terminated PL011 `echo` produces one response and one
   prompt. One deliberate unknown command reports its error, and a later
-  `echo recovered` succeeds. The periodic System heartbeat and Thread-A/B
-  liveness loops are disabled. After the validation programs exit, the
+  `echo recovered` succeeds. A paced PL011 probe fills all 128 input slots,
+  checks eight bells for excess bytes, runs only the accepted `echo` payload,
+  and confirms the next command still works. The periodic System heartbeat
+  and Thread-A/B liveness loops are disabled. After the programs exit, the
   framebuffer clears boot logs, draws a CantayaOS version banner, and mirrors
   terminal text in a lower pane that scrolls without moving the banner. QEMU's
   OVMF GOP uses 1024x768 when available; a QEMU screendump confirmed the pane.
@@ -347,6 +349,10 @@ A CRLF-terminated PL011 `echo crlfprobe` returns one checked response and no
 extra blank-command prompt.
 The only unknown-command response is the deliberate `boguscmd` error; a
 subsequent `echo recovered` succeeds at the next prompt.
+A paced PL011 probe fills the 128-byte input line, checks eight consecutive
+overflow bells, rejects the excess `boguscmd` suffix, and runs the accepted
+`echo` payload. The next `echo boundok` succeeds. All earlier keyboard,
+serial, and two-round lifecycle assertions remain required.
 
 This validates the QEMU `virt`/TCG path. It is not hardware certification or
 evidence of Windows application compatibility.

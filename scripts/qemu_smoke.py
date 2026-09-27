@@ -30,6 +30,17 @@ CRLF_RESPONSE = "\ncrlfprobe\ncantaya> "
 CRLF_EXTRA_PROMPT = CRLF_RESPONSE + "\ncantaya> "
 UNKNOWN_RESPONSE = "Unknown command: boguscmd\ncantaya> "
 RECOVERY_RESPONSE = "\nrecovered\ncantaya> "
+LINE_CAPACITY = 128
+OVERFLOW_TEXT = b"boguscmd"
+BOUNDED_LINE = b"echo " + b"x" * (LINE_CAPACITY - len(b"echo "))
+OVERFLOW_INPUT = BOUNDED_LINE + OVERFLOW_TEXT + b"\r"
+OVERFLOW_RESPONSE = (
+    "\x07" * len(OVERFLOW_TEXT)
+    + "\n"
+    + "x" * (LINE_CAPACITY - len(b"echo "))
+    + "\ncantaya> "
+)
+OVERFLOW_FOLLOWUP_RESPONSE = "\nboundok\ncantaya> "
 SERIAL_STEPS = (
     (KEYBOARD_EDIT_RESPONSE, b"echo serialprobe\r"),
     (CLEAR_FOLLOWUP_RESPONSE, b"info\r"),
@@ -38,6 +49,8 @@ SERIAL_STEPS = (
     (MEM_RESPONSE, b"echo crlfprobe\r\n"),
     (CRLF_RESPONSE, b"boguscmd\r"),
     (UNKNOWN_RESPONSE, b"echo recovered\r"),
+    (RECOVERY_RESPONSE, OVERFLOW_INPUT),
+    (OVERFLOW_RESPONSE, b"echo boundok\r"),
 )
 KEYBOARD_STEPS = (
     (TERMINAL_PROMPT, ("h", "e", "l", "p", "ret")),
@@ -111,6 +124,8 @@ REQUIRED_MARKERS = (
     CRLF_RESPONSE,
     UNKNOWN_RESPONSE,
     RECOVERY_RESPONSE,
+    OVERFLOW_RESPONSE,
+    OVERFLOW_FOLLOWUP_RESPONSE,
 )
 REQUIRED_PATTERNS = (
     ("uptime command response", UPTIME_RESPONSE),
@@ -211,13 +226,26 @@ def response_seen(trigger: str | re.Pattern[str], output: str) -> bool:
     return trigger in output if isinstance(trigger, str) else trigger.search(output) is not None
 
 
+def send_serial_input(stream, payload: bytes) -> None:
+    if payload == OVERFLOW_INPUT:
+        # QEMU's PL011 FIFO is small. Pace the boundary probe so it measures
+        # the shell's line limit instead of dropped UART input bytes.
+        for offset in range(0, len(payload), 4):
+            stream.write(payload[offset : offset + 4])
+            stream.flush()
+            time.sleep(0.05)
+    else:
+        stream.write(payload)
+        stream.flush()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--qemu", required=True)
     parser.add_argument("--ovmf", type=Path, required=True)
     parser.add_argument("--ovmf-vars", type=Path, required=True)
     parser.add_argument("--image", type=Path, required=True)
-    parser.add_argument("--timeout", type=float, default=25.0)
+    parser.add_argument("--timeout", type=float, default=35.0)
     args = parser.parse_args()
 
     with tempfile.TemporaryDirectory(prefix="cantaya-smoke-") as directory:
@@ -284,8 +312,9 @@ def main() -> int:
                         try:
                             if process.stdin is None:
                                 raise RuntimeError("PL011 input pipe is unavailable")
-                            process.stdin.write(SERIAL_STEPS[serial_step][1])
-                            process.stdin.flush()
+                            send_serial_input(
+                                process.stdin, SERIAL_STEPS[serial_step][1]
+                            )
                             serial_step += 1
                         except (OSError, RuntimeError) as error:
                             input_error = str(error)
@@ -328,6 +357,8 @@ def main() -> int:
     )
     if output.count("Unknown command:") != 1:
         missing.append("exactly one intentional unknown-command response")
+    if output.count("\x07") != len(OVERFLOW_TEXT):
+        missing.append(f"exactly {len(OVERFLOW_TEXT)} overflow bells")
     if failures or missing or input_error:
         print("CantayaOS QEMU smoke test failed.", file=sys.stderr)
         if input_error:
