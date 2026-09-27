@@ -4,12 +4,17 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
+
+TERMINAL_PROMPT = "CantayaOS terminal. Type 'help' for commands."
+KEYBOARD_HELP_RESPONSE = "help          Show commands"
 
 
 # Presence-only markers. Markers with minimum counts are checked below.
@@ -39,7 +44,8 @@ REQUIRED_MARKERS = (
     "NtQuerySystemInfo copied validated EL0 output",
     "Ps: typed process and thread handle waits validated",
     "Ps: process pid=",
-    "CantayaOS terminal. Type 'help' for commands.",
+    TERMINAL_PROMPT,
+    KEYBOARD_HELP_RESPONSE,
 )
 REQUIRED_MARKER_COUNTS = {
     "Ps: reaped thread": 5,
@@ -94,6 +100,43 @@ FAILURE_MARKERS = (
 )
 
 
+def qmp_execute(stream, command: dict[str, object]) -> None:
+    stream.write(json.dumps(command).encode() + b"\n")
+    stream.flush()
+    while True:
+        line = stream.readline()
+        if not line:
+            raise RuntimeError("QMP connection closed before a reply")
+        response = json.loads(line)
+        if "error" in response:
+            raise RuntimeError(f"QMP rejected {command['execute']}: {response['error']}")
+        if "return" in response:
+            return
+
+
+def send_keyboard_help(monitor_path: Path) -> None:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as monitor:
+        monitor.settimeout(2)
+        monitor.connect(str(monitor_path))
+        with monitor.makefile("rwb") as stream:
+            line = stream.readline()
+            if not line:
+                raise RuntimeError("QMP connection closed before its greeting")
+            greeting = json.loads(line)
+            if "QMP" not in greeting:
+                raise RuntimeError("QMP greeting was missing")
+            qmp_execute(stream, {"execute": "qmp_capabilities"})
+            for key in ("h", "e", "l", "p", "ret"):
+                qmp_execute(
+                    stream,
+                    {
+                        "execute": "human-monitor-command",
+                        "arguments": {"command-line": f"sendkey {key} 20"},
+                    },
+                )
+                time.sleep(0.05)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--qemu", required=True)
@@ -105,6 +148,7 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="cantaya-smoke-") as directory:
         serial_log = Path(directory) / "serial.log"
+        monitor_path = Path(directory) / "qmp.sock"
         # A visible `make run` may have these writable images open already.
         # Give this headless guest private copies so the smoke test can boot.
         vars_copy = Path(directory) / "ovmf-vars.fd"
@@ -125,11 +169,14 @@ def main() -> int:
             "-global", "virtio-mmio.force-legacy=false",
             "-device", "virtio-blk-device,drive=cantaya-disk",
             "-serial", f"file:{serial_log}",
+            "-qmp", f"unix:{monitor_path},server=on,wait=off",
             "-display", "none",
             "-no-reboot",
         ]
         process = subprocess.Popen(command)
         output = ""
+        keyboard_sent = False
+        input_error = None
         deadline = time.monotonic() + args.timeout
 
         try:
@@ -138,6 +185,13 @@ def main() -> int:
                     output = serial_log.read_text(errors="replace")
                     if any(marker in output for marker in FAILURE_MARKERS):
                         break
+                    if TERMINAL_PROMPT in output and not keyboard_sent:
+                        try:
+                            send_keyboard_help(monitor_path)
+                            keyboard_sent = True
+                        except (OSError, ValueError, RuntimeError) as error:
+                            input_error = str(error)
+                            break
                     if all(marker in output for marker in REQUIRED_MARKERS) and all(
                         output.count(marker) >= count
                         for marker, count in REQUIRED_MARKER_COUNTS.items()
@@ -165,8 +219,10 @@ def main() -> int:
         for marker, count in REQUIRED_MARKER_COUNTS.items()
         if output.count(marker) < count
     )
-    if failures or missing:
+    if failures or missing or input_error:
         print("CantayaOS QEMU smoke test failed.", file=sys.stderr)
+        if input_error:
+            print(f"Keyboard injection failed: {input_error}", file=sys.stderr)
         if failures:
             print(f"Failure markers: {', '.join(failures)}", file=sys.stderr)
         if missing:

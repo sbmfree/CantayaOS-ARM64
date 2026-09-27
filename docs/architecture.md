@@ -179,7 +179,7 @@ The development test platform is QEMU `aarch64` `virt` with OVMF, using the
 `cortex-a57` TCG CPU model on macOS. `make smoke` builds the boot image and
 starts headless QEMU; its marker contract is the regression check for the MMU,
 EL0, scheduler, user-memory, process/thread, fixed-image I/O, terminal startup,
-and VirtIO keyboard initialization. A separate QEMU monitor key-injection
-check verified command input through the keyboard device. It is
-not hardware certification or a Windows-compatibility claim. See
+and VirtIO keyboard input: a private QMP monitor sends `help` and the serial
+log must contain its response. It is not hardware certification or a
+Windows-compatibility claim. See
 [verified-features.md](verified-features.md) for the complete evidence scope.

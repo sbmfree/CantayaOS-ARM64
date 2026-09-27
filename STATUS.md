@@ -6,8 +6,8 @@
 
 ## Current Milestone
 
-**Objective:** Make the QEMU smoke test exercise actual VirtIO keyboard
-commands after terminal startup while retaining its lifecycle regression.
+**Objective:** Extend the automated VirtIO keyboard regression to prove
+Backspace and Ctrl-U edit an unfinished command without executing stale text.
 
 ## Verified Baseline For Planning
 
@@ -26,6 +26,9 @@ commands after terminal startup while retaining its lifecycle regression.
   the periodic heartbeat and Thread-A/B demonstration loops are disabled.
   QEMU uses 1024x768 GOP mode when available. Keyboard decoding currently
   covers US ASCII, Shift, Caps Lock, Backspace, Enter, Ctrl-U, and Ctrl-L.
+- `make smoke` now uses a private QMP monitor socket to send `help` through the
+  VirtIO keyboard after terminal startup and requires its command response in
+  the serial log, in addition to all lifecycle counts.
 - Current EL0 coverage includes validated user-memory copy-in/copy-out, virtual
   allocation and free, thread create/wait/close/terminate, process
   create/wait/close/terminate, and system-information query.
@@ -139,11 +142,9 @@ lives in [docs/architecture.md](docs/architecture.md).
 
 ## Latest Verified Milestone
 
-Cross-page timeout and completion-output ranges are rejected before waiting
-on live thread and process handles. Both init processes verify unchanged
-mapped-side and passed-output sentinels, then complete valid finite and
-infinite waits with checked statuses. `make smoke` passed with two new markers,
-the existing lifecycle counts, and the keyboard and terminal startup markers.
+The headless QEMU smoke test now sends `help` through the VirtIO keyboard and
+requires the terminal's help response, while retaining all lifecycle counts.
+Its QMP socket, disk image, and OVMF variables remain private to the run.
 
 ## Latest Planning Decision
 
@@ -152,16 +153,15 @@ the closed-slot aliasing gap and selected issuance generations. Output-pointer
 prevalidation now has EL0 evidence for both creation calls; the later
 copy-out rollback branches remain source-reviewed. Entry and stack rejection,
 ordinary typed-wait preflight, and cross-page wait arguments have EL0 evidence.
-Terminal command input has been checked by separate QEMU key injection, but
-not yet by the automated smoke test.
+Terminal `help` input is now checked automatically through QEMU key injection;
+editing controls are not yet in that regression.
 
 ## Recommended Next Milestone
 
-Extend `make smoke` to send a short command through QEMU's VirtIO keyboard
-after the terminal prompt appears. Require the command's response in the
-serial log, alongside all existing lifecycle markers and counts. Keep this
-test-only: do not broaden the terminal command set or change the kernel input
-model. Use private QEMU state so concurrent `make run` remains unaffected.
+Extend the same private-QMP smoke test to type unfinished text, clear it with
+Ctrl-U, and correct a later character with Backspace before submitting an
+`echo` command. Require only the corrected response and no stale-command
+execution, alongside all lifecycle markers. Keep this test-only.
 
 ### Follow-On Candidates
 
@@ -217,17 +217,17 @@ model. Use private QEMU state so concurrent `make run` remains unaffected.
 
 ## Current Blockers
 
-None recorded for bounded keyboard-command smoke automation.
+None recorded for bounded keyboard-editing smoke automation.
 
 ## Verification Requirements
 
 Run `make smoke` for meaningful kernel, MMU, scheduler, syscall, process, or
 I/O changes, including keyboard input. It is the regression check for the QEMU
 `virt`/TCG path and must demonstrate the required runtime markers; a
-successful compile alone is not completion. For keyboard behavior changes,
-also inject actual QEMU key events and verify that a terminal command runs;
-smoke currently checks initialization and startup. This is not hardware
-certification or evidence of Windows application compatibility.
+successful compile alone is not completion. Smoke now injects `help` key
+events and verifies the response; additional keyboard behavior changes need
+targeted key-event checks. This is not hardware certification or evidence of
+Windows application compatibility.
 
 ## Detailed References
 

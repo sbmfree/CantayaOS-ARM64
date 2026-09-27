@@ -12,8 +12,9 @@ next, read [STATUS.md](../STATUS.md).
   keyboard, then handles `help`, `info`, `uptime`, `mem`, `echo`, and `clear`
   without a user-mode file or process interface. The keyboard driver polls
   its event queue, decodes a US ASCII key map with Shift and Caps Lock, and
-  leaves LED feedback unimplemented. QEMU monitor key injection ran `help`
-  and `echo window` through the keyboard and produced both expected outputs.
+  leaves LED feedback unimplemented. `make smoke` now injects `help` through a
+  private QMP monitor and requires its terminal response. A separate earlier
+  QEMU injection also ran `echo window` successfully.
   The periodic System heartbeat and Thread-A/B liveness loops are disabled. After
   the validation programs exit, the framebuffer clears boot logs, draws a
   CantayaOS version banner, and mirrors terminal text in a lower pane that
@@ -319,10 +320,10 @@ Cross-page wait preflight adds two
 passed with these, the previous lifecycle checks, and the keyboard and
 terminal startup markers.
 
-The terminal and keyboard change also passed `make smoke`; the smoke marker
-checks keyboard initialization, while a separate QEMU key-injection run
-verified actual command input. A QEMU framebuffer screendump confirmed the
-1024x768 mode and banner with the lower terminal pane.
+The terminal and keyboard change also passed `make smoke`; the smoke test now
+injects `help` through the keyboard and requires its command response. A
+separate earlier injection verified `echo window`. A QEMU framebuffer
+screendump confirmed the 1024x768 mode and banner with the lower terminal pane.
 
 This validates the QEMU `virt`/TCG path. It is not hardware certification or
 evidence of Windows application compatibility.
