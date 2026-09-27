@@ -15,6 +15,18 @@ from pathlib import Path
 
 TERMINAL_PROMPT = "CantayaOS terminal. Type 'help' for commands."
 KEYBOARD_HELP_RESPONSE = "help          Show commands"
+KEYBOARD_EDIT_RESPONSE = "\nedited\ncantaya> "
+KEYBOARD_STEPS = (
+    (TERMINAL_PROMPT, ("h", "e", "l", "p", "ret")),
+    (
+        KEYBOARD_HELP_RESPONSE,
+        (
+            "j", "u", "n", "k", "ctrl-u",
+            "e", "c", "h", "o", "spc", "e", "d", "i", "t", "e", "x",
+            "backspace", "d", "ret",
+        ),
+    ),
+)
 
 
 # Presence-only markers. Markers with minimum counts are checked below.
@@ -46,6 +58,7 @@ REQUIRED_MARKERS = (
     "Ps: process pid=",
     TERMINAL_PROMPT,
     KEYBOARD_HELP_RESPONSE,
+    KEYBOARD_EDIT_RESPONSE,
 )
 REQUIRED_MARKER_COUNTS = {
     "Ps: reaped thread": 5,
@@ -97,6 +110,7 @@ FAILURE_MARKERS = (
     "[System] heartbeat",
     "[Thread-A] alive",
     "[Thread-B] alive",
+    "Unknown command:",
 )
 
 
@@ -114,7 +128,7 @@ def qmp_execute(stream, command: dict[str, object]) -> None:
             return
 
 
-def send_keyboard_help(monitor_path: Path) -> None:
+def send_keyboard_keys(monitor_path: Path, keys: tuple[str, ...]) -> None:
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as monitor:
         monitor.settimeout(2)
         monitor.connect(str(monitor_path))
@@ -126,7 +140,7 @@ def send_keyboard_help(monitor_path: Path) -> None:
             if "QMP" not in greeting:
                 raise RuntimeError("QMP greeting was missing")
             qmp_execute(stream, {"execute": "qmp_capabilities"})
-            for key in ("h", "e", "l", "p", "ret"):
+            for key in keys:
                 qmp_execute(
                     stream,
                     {
@@ -175,7 +189,7 @@ def main() -> int:
         ]
         process = subprocess.Popen(command)
         output = ""
-        keyboard_sent = False
+        keyboard_step = 0
         input_error = None
         deadline = time.monotonic() + args.timeout
 
@@ -185,10 +199,14 @@ def main() -> int:
                     output = serial_log.read_text(errors="replace")
                     if any(marker in output for marker in FAILURE_MARKERS):
                         break
-                    if TERMINAL_PROMPT in output and not keyboard_sent:
+                    if keyboard_step < len(KEYBOARD_STEPS) and (
+                        KEYBOARD_STEPS[keyboard_step][0] in output
+                    ):
                         try:
-                            send_keyboard_help(monitor_path)
-                            keyboard_sent = True
+                            send_keyboard_keys(
+                                monitor_path, KEYBOARD_STEPS[keyboard_step][1]
+                            )
+                            keyboard_step += 1
                         except (OSError, ValueError, RuntimeError) as error:
                             input_error = str(error)
                             break
