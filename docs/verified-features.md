@@ -54,6 +54,12 @@ next, read [STATUS.md](../STATUS.md).
   statuses, and release their resources. A failure-only entry is watched by
   smoke and must never run. The post-insertion copy-out rollback branches are
   source-reviewed but not deterministically reached by this EL0 probe.
+- Both init processes reject a mapped non-executable thread entry and
+  misaligned or unmapped stack tops before publishing a handle. The writable
+  output sentinel stays unchanged after all three failures. A subsequent
+  valid thread receives the exactly predicted next generation, completes
+  with a checked status, and releases its stack. `make smoke` requires two
+  entry-and-stack preflight markers and rejects the failure-only entry marker.
 - `NtTerminateThread` accepts only a parent-owned typed thread handle. It
   rejects `CURRENT`, safely removes a ready or waiting non-current target from
   the single-core queue, signals its requested final status, and defers raw
@@ -269,6 +275,9 @@ negative probe adds the boot-time `Ps: malformed typed handle values rejected`
 marker. Output-pointer validation adds two
 `[user-init] create output failures left no handles` markers and rejects the
 failure-only target marker; `make smoke` passed with these and all prior checks.
+Thread entry and stack preflight adds two
+`[user-init] thread entry and stack preflight validated` markers; `make smoke`
+passed with these and all prior checks.
 
 This validates the QEMU `virt`/TCG path. It is not hardware certification or
 evidence of Windows application compatibility.

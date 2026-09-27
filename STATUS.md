@@ -6,9 +6,9 @@
 
 ## Current Milestone
 
-**Objective:** Verify `NtCreateThread` rejects non-executable entry points and
-invalid user stack tops before publishing a handle, without changing its
-syscall contract or the two-round EL0 lifecycle regression.
+**Objective:** Verify typed wait input preflight for live thread and process
+handles without disturbing completion registration or the two-round EL0
+lifecycle regression.
 
 ## Verified Baseline For Planning
 
@@ -93,6 +93,11 @@ syscall contract or the two-round EL0 lifecycle regression.
   generations, complete with checked statuses, and release their resources.
   Smoke requires two output-failure markers and absence of a failure-only
   target marker. Post-insertion copy-out rollback is source-reviewed only.
+- Both init processes reject a mapped non-executable thread entry and
+  misaligned or unmapped stack tops with a valid output pointer. Its sentinel
+  stays unchanged; the next valid thread receives the exact next handle
+  generation, completes with a checked status, and releases its stack. Smoke
+  requires two entry-and-stack preflight markers.
 - Each init process also starts two controlled fresh processes whose first
   thread handles both equal numeric `1`. The child completes and closes its
   own thread; the parent still sees a timeout on its live thread and then
@@ -115,11 +120,11 @@ lives in [docs/architecture.md](docs/architecture.md).
 
 ## Latest Verified Milestone
 
-Invalid creation output pointers are rejected before handle publication or
-target start. Both init processes test null, unmapped, read-only, and
-cross-page pointers for thread and process creation, retain a boundary
-sentinel, and complete valid creations with precisely predicted next handles.
-`make smoke` passed with two new markers and all existing lifecycle counts.
+Invalid thread entries and stack tops are rejected before handle publication
+or target start. Both init processes test a mapped non-executable entry and
+misaligned and unmapped stack tops, retain an output sentinel, and complete a
+valid thread with the precisely predicted next handle. `make smoke` passed
+with two new markers and all existing lifecycle counts.
 
 ## Latest Planning Decision
 
@@ -127,16 +132,17 @@ The [lifecycle contract review](docs/lifecycle-contract-review.md) identified
 the closed-slot aliasing gap and selected issuance generations. Output-pointer
 prevalidation now has EL0 evidence for both creation calls; the later
 copy-out rollback branches remain source-reviewed. Entry and stack rejection
-is the next creation preflight case.
+also has EL0 evidence. Typed wait preflight is the next bounded case.
 
 ## Recommended Next Milestone
 
-With a valid writable output pointer, call `NtCreateThread` using a mapped
-non-executable entry and invalid stack tops (misaligned and unmapped). Require
-`STATUS_ACCESS_VIOLATION`, unchanged output sentinel, no started target, and
-no handle-generation advance; then create and complete one valid thread.
-Require markers from both init processes and preserve the two-round smoke
-regression. Keep the current-process and mapping restrictions unchanged.
+With live thread and process handles, call `NtWaitForSingleObject` using an
+invalid timeout pointer or value and an unwritable completion-status output.
+Require the existing error statuses, unchanged output sentinel, and no stale
+wait registration. Then require a finite timeout without an output write,
+terminate each target, and observe its checked completion status through a
+valid output. Require markers from both init processes and preserve the
+two-round smoke regression. Keep non-alertable wait and timeout bounds.
 
 ### Follow-On Candidates
 
@@ -192,7 +198,7 @@ regression. Keep the current-process and mapping restrictions unchanged.
 
 ## Current Blockers
 
-None recorded for bounded thread-entry and stack preflight verification.
+None recorded for bounded typed wait preflight verification.
 
 ## Verification Requirements
 

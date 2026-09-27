@@ -61,6 +61,7 @@ REQUIRED_MARKER_COUNTS = {
     "[user-init] colliding parent thread handle remained live": 2,
     "[user-init] EL0 numeric handle collision validated": 2,
     "[user-init] create output failures left no handles": 2,
+    "[user-init] thread entry and stack preflight validated": 2,
     "[user-init] finite typed wait timeout validated": 2,
     "[user-init] process-wide blocked wait termination validated": 2,
     "Ps: current-process termination cleared 1 typed wait registration(s)": 2,

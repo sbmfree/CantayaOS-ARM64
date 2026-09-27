@@ -1791,6 +1791,110 @@ mixed_lifecycle_done:
     svc #0
     cbnz x0, 2f
 
+    // Entry and stack preflight must also reject before publication. Keep a
+    // writable output sentinel so rejected calls cannot hide a copy-out.
+    sub sp, sp, #32
+    str xzr, [sp]
+    movn x0, #0
+    mov x1, sp
+    mov x2, #0x1000
+    mov x8, #0x15
+    svc #0
+    cbnz x0, 2f
+    ldr x21, [sp]
+    cbz x21, 2f
+    add x22, x21, #0x1000
+    mov x9, #0x7e
+    str x9, [sp, #8]
+    movz x19, #0x5
+    movk x19, #0xc000, lsl #16
+    movz x20, #0x8
+    movk x20, #0xc000, lsl #16
+
+    add x0, sp, #8
+    adr x1, mixed_process_target_handle
+    mov x2, x22
+    mov x8, #0x4e
+    svc #0
+    cmp x0, x19
+    b.ne 2f
+    ldr x9, [sp, #8]
+    cmp x9, #0x7e
+    b.ne 2f
+
+    add x0, sp, #8
+    adr x1, unexpected_creation_entry
+    sub x2, x22, #8
+    mov x8, #0x4e
+    svc #0
+    cmp x0, x19
+    b.ne 2f
+    ldr x9, [sp, #8]
+    cmp x9, #0x7e
+    b.ne 2f
+
+    add x0, sp, #8
+    adr x1, unexpected_creation_entry
+    movz x2, #3, lsl #32
+    mov x8, #0x4e
+    svc #0
+    cmp x0, x19
+    b.ne 2f
+    ldr x9, [sp, #8]
+    cmp x9, #0x7e
+    b.ne 2f
+
+    movz x9, #1, lsl #32
+    add x23, x25, x9
+    mov x0, x23
+    mov x8, #0xf
+    svc #0
+    cmp x0, x20
+    b.ne 2f
+    add x0, sp, #8
+    adr x1, mixed_thread_wait_target_entry
+    mov x2, x22
+    mov x8, #0x4e
+    svc #0
+    cbnz x0, 2f
+    ldr x24, [sp, #8]
+    cmp x24, x23
+    b.ne 2f
+    mov x0, x24
+    mov x1, #0x87
+    mov x8, #0x30
+    svc #0
+    cbnz x0, 2f
+    mov x0, x24
+    mov x1, xzr
+    mov x2, xzr
+    str xzr, [sp, #16]
+    add x3, sp, #16
+    mov x8, #0x4
+    svc #0
+    cbnz x0, 2f
+    ldr x9, [sp, #16]
+    cmp x9, #0x87
+    b.ne 2f
+    mov x0, x24
+    mov x8, #0xf
+    svc #0
+    cbnz x0, 2f
+    movn x0, #0
+    mov x1, x21
+    mov x2, #0x1000
+    mov x8, #0x1b
+    svc #0
+    cbnz x0, 2f
+    add sp, sp, #32
+    movn x0, #0
+    adr x1, create_thread_preflight_message
+    adr x2, create_thread_preflight_message_end
+    sub x2, x2, x1
+    mov x8, #0x8
+    svc #0
+    cbnz x0, 2f
+
     // A fresh selector-zero child has its own empty handle table. Give it a
     // live process value, then a live thread value; in each case its failed
     // operations must leave the parent's target usable.
@@ -2531,6 +2635,9 @@ el0_numeric_collision_message_end:
 create_output_failure_message:
     .ascii "[user-init] create output failures left no handles\n"
 create_output_failure_message_end:
+create_thread_preflight_message:
+    .ascii "[user-init] thread entry and stack preflight validated\n"
+create_thread_preflight_message_end:
 unexpected_creation_message:
     .ascii "[user-init] ERROR failed creation started target\n"
 unexpected_creation_message_end:

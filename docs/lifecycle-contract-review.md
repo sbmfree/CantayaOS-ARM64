@@ -90,6 +90,11 @@ that its saved and replacement values refer to the same table slot.
     failure-only entry does not run. `make smoke` passed with two output-
     failure markers and prior checks. Post-insertion copy-out rollback is
     source-reviewed, not exercised by these prevalidation failures.
+12. Both init processes reject a non-executable mapped thread entry and
+    misaligned or unmapped stack tops before publishing a handle. The output
+    sentinel remains unchanged, and the next valid creation receives the
+    expected generation and completes with a checked status. `make smoke`
+    passed with two entry-and-stack preflight markers and prior checks.
 
 The [hard constraints](../STATUS.md#hard-constraints-and-do-not-implement-yet)
 remain in force for later milestones.
