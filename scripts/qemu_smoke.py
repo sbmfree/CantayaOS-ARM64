@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 
+# Presence-only markers. Markers with minimum counts are checked below.
 REQUIRED_MARKERS = (
     "MMU enabled:",
     "Kernel executing through TTBR1:",
@@ -20,42 +21,21 @@ REQUIRED_MARKERS = (
     "AArch64 fault decoder probe passed",
     "Ps: init ELF mapped",
     "VirtIO block: live read-only boot disk ready",
-    "Io: read-only file CHILD.ELF dispatching image IRP",
-    "Io: IRP read-only image CHILD.ELF completed",
-    "Ps: FAT CHILD.ELF mapped",
     "Ps: external current-thread termination rejected",
     "Ps: external queued-thread termination validated",
     "Ps: external completed-thread termination validated",
     "Ps: typed handle access rights validated",
+    "Ps: stale typed handle reuse rejected",
+    "Ps: exhausted typed handle slot skipped",
+    "Ps: process-local numeric handle collision validated",
+    "Ps: malformed typed handle values rejected",
     "EL0 timer preemption captured",
     "[user-init] EL0 context resume validated",
-    "[user-init] EL0 fixed VM reuse validated",
-    "[user-init] EL0 thread handle wait validated",
-    "[user-init] external thread handle termination validated",
-    "[user-init] blocked typed wait thread termination validated",
-    "[user-init] finite blocked typed wait thread termination validated",
-    "[user-init] blocked process wait thread termination validated",
-    "[user-init] finite blocked process wait thread termination validated",
-    "[user-init] finite typed wait timeout validated",
-    "[user-init] process-wide blocked wait termination validated",
-    "[user-init] external process blocked wait termination validated",
-    "[user-init] EL0 process handle wait validated",
-    "[user-child] FAT image executed",
-    "[user-init] FAT child status wait validated",
     "NtWriteFile copied",
     "NtAllocateVirtual mapped",
     "NtFreeVirtual released",
     "NtQuerySystemInfo copied validated EL0 output",
-    "NtCreateThread created a validated EL0 thread",
-    "NtCreateProcess created pid=",
-    "source=FAT CHILD.ELF",
-    "NtWaitForSingleObject observed exit status=",
     "Ps: typed process and thread handle waits validated",
-    "Ps: external thread termination cleared typed wait registration",
-    "Ps: external thread termination cleared typed process wait registration",
-    "Ps: external thread termination cleared finite typed wait",
-    "Ps: current-process termination cleared 1 typed wait registration(s)",
-    "Ps: external process termination cleared ",
     "Ps: process pid=",
     "[System] heartbeat",
     "[Thread-A] alive",
@@ -70,13 +50,23 @@ REQUIRED_MARKER_COUNTS = {
     "[user-init] finite blocked typed wait thread termination validated": 2,
     "[user-init] blocked process wait thread termination validated": 2,
     "[user-init] finite blocked process wait thread termination validated": 2,
+    # Two complete rounds in each of the two initial EL0 processes.
+    "[user-init] mixed finite lifecycle cancellation validated": 4,
+    "[user-init] stale typed handles rejected after reuse": 2,
+    "[user-init] cross-type stale handles rejected after reuse": 2,
+    "[user-init] multi-generation stale handles rejected after churn": 2,
+    "[user-init] isolated child rejected parent handle": 4,
+    "[user-init] process-local parent handles validated": 2,
+    "[user-init] colliding child thread handle completed": 2,
+    "[user-init] colliding parent thread handle remained live": 2,
+    "[user-init] EL0 numeric handle collision validated": 2,
     "[user-init] finite typed wait timeout validated": 2,
     "[user-init] process-wide blocked wait termination validated": 2,
     "Ps: current-process termination cleared 1 typed wait registration(s)": 2,
     "[user-init] external process blocked wait termination validated": 2,
-    "Ps: external thread termination cleared typed wait registration": 2,
-    "Ps: external thread termination cleared typed process wait registration": 4,
-    "Ps: external thread termination cleared finite typed wait": 4,
+    "Ps: external thread termination cleared typed wait registration": 16,
+    "Ps: external thread termination cleared typed process wait registration": 8,
+    "Ps: external thread termination cleared finite typed wait": 12,
     "Ps: external process termination cleared ": 2,
     "NtCreateThread created a validated EL0 thread": 2,
     "NtCreateProcess created pid=": 2,
@@ -102,7 +92,7 @@ def main() -> int:
     parser.add_argument("--ovmf", type=Path, required=True)
     parser.add_argument("--ovmf-vars", type=Path, required=True)
     parser.add_argument("--image", type=Path, required=True)
-    parser.add_argument("--timeout", type=float, default=20.0)
+    parser.add_argument("--timeout", type=float, default=25.0)
     args = parser.parse_args()
 
     with tempfile.TemporaryDirectory(prefix="cantaya-smoke-") as directory:
@@ -113,6 +103,7 @@ def main() -> int:
             "-cpu", "cortex-a57",
             "-m", "512M",
             "-device", "ramfb",
+            "-nic", "none",
             "-drive", f"if=pflash,format=raw,file={args.ovmf},readonly=on",
             "-drive", f"if=pflash,format=raw,file={args.ovmf_vars}",
             "-drive", f"if=none,format=raw,file={args.image},id=cantaya-disk",
