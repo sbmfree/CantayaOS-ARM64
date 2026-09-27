@@ -17,6 +17,7 @@ TERMINAL_PROMPT = "CantayaOS terminal. Type 'help' for commands."
 KEYBOARD_HELP_RESPONSE = "help          Show commands"
 KEYBOARD_EDIT_RESPONSE = "\nedited\ncantaya> "
 SERIAL_ECHO_RESPONSE = "\nserialprobe\ncantaya> "
+KEYBOARD_MODIFIER_RESPONSE = "\nAbCd\ncantaya> "
 KEYBOARD_STEPS = (
     (TERMINAL_PROMPT, ("h", "e", "l", "p", "ret")),
     (
@@ -25,6 +26,13 @@ KEYBOARD_STEPS = (
             "j", "u", "n", "k", "ctrl-u",
             "e", "c", "h", "o", "spc", "e", "d", "i", "t", "e", "x",
             "backspace", "d", "ret",
+        ),
+    ),
+    (
+        SERIAL_ECHO_RESPONSE,
+        (
+            "e", "c", "h", "o", "spc", "shift-a", "b",
+            "caps_lock", "c", "caps_lock", "d", "ret",
         ),
     ),
 )
@@ -61,6 +69,7 @@ REQUIRED_MARKERS = (
     KEYBOARD_HELP_RESPONSE,
     KEYBOARD_EDIT_RESPONSE,
     SERIAL_ECHO_RESPONSE,
+    KEYBOARD_MODIFIER_RESPONSE,
 )
 REQUIRED_MARKER_COUNTS = {
     "Ps: reaped thread": 5,

@@ -6,8 +6,8 @@
 
 ## Current Milestone
 
-**Objective:** Verify keyboard Shift and Caps Lock decoding through a mixed-
-case terminal command in the existing QEMU smoke run.
+**Objective:** Verify Ctrl-L clears and redraws the terminal while preserving
+an unfinished command in the existing QEMU smoke run.
 
 ## Verified Baseline For Planning
 
@@ -34,6 +34,9 @@ case terminal command in the existing QEMU smoke run.
 - The same smoke run sends `echo serialprobe` through PL011 standard input and
   requires its distinct response in the captured serial log. The keyboard
   assertions and lifecycle counts remain required.
+- A later keyboard command produces the checked mixed-case `AbCd` response:
+  Shift uppercases `A`, Caps Lock uppercases `C`, and a second Caps Lock press
+  restores lowercase `d`. Smoke retains the serial and lifecycle assertions.
 - Current EL0 coverage includes validated user-memory copy-in/copy-out, virtual
   allocation and free, thread create/wait/close/terminate, process
   create/wait/close/terminate, and system-information query.
@@ -147,9 +150,10 @@ lives in [docs/architecture.md](docs/architecture.md).
 
 ## Latest Verified Milestone
 
-The headless QEMU smoke test now proves a PL011 serial `echo` command after
-the keyboard `help` and editing checks. Its response is distinguished from
-the typed command, and all existing lifecycle counts remain required.
+The headless QEMU smoke test now proves Shift and Caps Lock decoding with a
+mixed-case `echo` response, including the return to lowercase after Caps Lock
+is released. It retains keyboard editing, PL011 serial, and all lifecycle
+checks.
 
 ## Latest Planning Decision
 
@@ -158,16 +162,16 @@ the closed-slot aliasing gap and selected issuance generations. Output-pointer
 prevalidation now has EL0 evidence for both creation calls; the later
 copy-out rollback branches remain source-reviewed. Entry and stack rejection,
 ordinary typed-wait preflight, and cross-page wait arguments have EL0 evidence.
-Terminal `help`, keyboard editing, and PL011 serial command input are now
-checked automatically. Shift and Caps Lock decoding is implemented but is not
-yet covered by injected smoke commands.
+Terminal `help`, keyboard editing, Shift/Caps Lock, and PL011 serial command
+input are now checked automatically. Ctrl-L screen clearing and unfinished-
+line restoration are implemented but not yet checked by smoke input.
 
 ## Recommended Next Milestone
 
-Extend the private-QMP smoke test with one `echo` command whose payload uses
-Shift and Caps Lock to produce a distinct mixed-case response. Require that
-response and retain the keyboard editing, serial command, and two-round
-lifecycle assertions. Keep this test-only and reset Caps Lock afterward.
+Extend the private-QMP smoke test to type an unfinished `echo` command, press
+Ctrl-L, then submit it. Require the terminal's clear sequence and the intact
+echoed payload in the serial log, while retaining the keyboard, PL011, and
+two-round lifecycle checks. Keep this test-only; do not change shell behavior.
 
 ### Follow-On Candidates
 
@@ -223,7 +227,7 @@ lifecycle assertions. Keep this test-only and reset Caps Lock afterward.
 
 ## Current Blockers
 
-None recorded for bounded keyboard-modifier smoke automation.
+None recorded for bounded Ctrl-L smoke automation.
 
 ## Verification Requirements
 
@@ -231,9 +235,9 @@ Run `make smoke` for meaningful kernel, MMU, scheduler, syscall, process, or
 I/O changes, including keyboard input. It is the regression check for the QEMU
 `virt`/TCG path and must demonstrate the required runtime markers; a
 successful compile alone is not completion. Smoke now injects `help`, Ctrl-U,
-and Backspace key events and checks responses; additional keyboard behavior
-changes need targeted key-event checks. This is not hardware certification or
-evidence of Windows application compatibility.
+Backspace, Shift, and Caps Lock key events and checks responses; additional
+keyboard behavior changes need targeted key-event checks. This is not hardware
+certification or evidence of Windows application compatibility.
 
 ## Detailed References
 

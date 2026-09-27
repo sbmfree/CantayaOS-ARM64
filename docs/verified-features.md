@@ -16,11 +16,13 @@ next, read [STATUS.md](../STATUS.md).
   private QMP monitor and requires its terminal response. The same smoke run
   verifies Ctrl-U clears unfinished text and Backspace corrects an `echo`
   command before submission. The smoke run also sends `echo serialprobe`
-  through PL011 and requires its distinct response. A separate earlier QEMU
-  injection ran `echo window` successfully. The periodic System heartbeat and
-  Thread-A/B liveness loops are disabled. After the validation programs exit,
-  the framebuffer clears boot logs, draws a
-  CantayaOS version banner, and mirrors terminal text in a lower pane that
+  through PL011 and requires its distinct response. A later keyboard command
+  checks Shift and Caps Lock with the mixed-case `AbCd` response, including
+  lowercase after Caps Lock is reset. A separate earlier QEMU injection ran
+  `echo window` successfully. The periodic System heartbeat and Thread-A/B
+  liveness loops are disabled. After the validation programs exit, the
+  framebuffer clears boot logs, draws a CantayaOS version banner, and mirrors
+  terminal text in a lower pane that
   scrolls without moving the banner. QEMU's OVMF GOP uses 1024x768 when that
   mode is available; a QEMU screendump confirmed this resolution and the pane.
 - The UEFI bootloader loads `kernel.elf` and `init.elf`, exits boot services,
@@ -328,7 +330,8 @@ injects `help` and an edited `echo` command through the keyboard and requires
 both responses, with no unknown-command output. A separate earlier injection
 verified `echo window`. A QEMU framebuffer screendump confirmed the 1024x768
 mode and banner with the lower terminal pane. The same smoke run additionally
-sends a PL011 serial `echo` command and checks its distinct response.
+sends a PL011 serial `echo` command and checks its distinct response. It also
+requires the mixed-case `AbCd` response from Shift/Caps Lock keyboard events.
 
 This validates the QEMU `virt`/TCG path. It is not hardware certification or
 evidence of Windows application compatibility.

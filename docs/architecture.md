@@ -179,9 +179,9 @@ The development test platform is QEMU `aarch64` `virt` with OVMF, using the
 `cortex-a57` TCG CPU model on macOS. `make smoke` builds the boot image and
 starts headless QEMU; its marker contract is the regression check for the MMU,
 EL0, scheduler, user-memory, process/thread, fixed-image I/O, terminal startup,
-and VirtIO keyboard input: a private QMP monitor sends `help` and an edited
-`echo` command, and the serial log must contain both responses. It is not
-the only input route checked: smoke also sends a distinct `echo` command to
-PL011 and requires its response. This is not hardware certification or a
+and VirtIO keyboard input: a private QMP monitor sends `help`, an edited
+`echo` command, and a Shift/Caps Lock mixed-case payload. The serial log must
+contain their responses. Smoke also sends a distinct `echo` command to PL011
+and requires its response. This is not hardware certification or a
 Windows-compatibility claim. See
 [verified-features.md](verified-features.md) for the complete evidence scope.
