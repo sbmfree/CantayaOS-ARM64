@@ -16,6 +16,7 @@ from pathlib import Path
 TERMINAL_PROMPT = "CantayaOS terminal. Type 'help' for commands."
 KEYBOARD_HELP_RESPONSE = "help          Show commands"
 KEYBOARD_EDIT_RESPONSE = "\nedited\ncantaya> "
+SERIAL_ECHO_RESPONSE = "\nserialprobe\ncantaya> "
 KEYBOARD_STEPS = (
     (TERMINAL_PROMPT, ("h", "e", "l", "p", "ret")),
     (
@@ -59,6 +60,7 @@ REQUIRED_MARKERS = (
     TERMINAL_PROMPT,
     KEYBOARD_HELP_RESPONSE,
     KEYBOARD_EDIT_RESPONSE,
+    SERIAL_ECHO_RESPONSE,
 )
 REQUIRED_MARKER_COUNTS = {
     "Ps: reaped thread": 5,
@@ -182,14 +184,20 @@ def main() -> int:
             "-drive", f"if=none,format=raw,file={image_copy},id=cantaya-disk",
             "-global", "virtio-mmio.force-legacy=false",
             "-device", "virtio-blk-device,drive=cantaya-disk",
-            "-serial", f"file:{serial_log}",
+            "-serial", "stdio",
             "-qmp", f"unix:{monitor_path},server=on,wait=off",
             "-display", "none",
             "-no-reboot",
         ]
-        process = subprocess.Popen(command)
+        # QEMU's PL011 stdio backend reads the pipe while its output still
+        # lands in the same file used by the marker contract.
+        with serial_log.open("wb") as serial_output:
+            process = subprocess.Popen(
+                command, stdin=subprocess.PIPE, stdout=serial_output
+            )
         output = ""
         keyboard_step = 0
+        serial_sent = False
         input_error = None
         deadline = time.monotonic() + args.timeout
 
@@ -210,6 +218,16 @@ def main() -> int:
                         except (OSError, ValueError, RuntimeError) as error:
                             input_error = str(error)
                             break
+                    if KEYBOARD_EDIT_RESPONSE in output and not serial_sent:
+                        try:
+                            if process.stdin is None:
+                                raise RuntimeError("PL011 input pipe is unavailable")
+                            process.stdin.write(b"echo serialprobe\r")
+                            process.stdin.flush()
+                            serial_sent = True
+                        except (OSError, RuntimeError) as error:
+                            input_error = str(error)
+                            break
                     if all(marker in output for marker in REQUIRED_MARKERS) and all(
                         output.count(marker) >= count
                         for marker, count in REQUIRED_MARKER_COUNTS.items()
@@ -219,6 +237,8 @@ def main() -> int:
                     break
                 time.sleep(0.1)
         finally:
+            if process.stdin is not None:
+                process.stdin.close()
             if process.poll() is None:
                 process.terminate()
                 try:
@@ -240,7 +260,7 @@ def main() -> int:
     if failures or missing or input_error:
         print("CantayaOS QEMU smoke test failed.", file=sys.stderr)
         if input_error:
-            print(f"Keyboard injection failed: {input_error}", file=sys.stderr)
+            print(f"Input injection failed: {input_error}", file=sys.stderr)
         if failures:
             print(f"Failure markers: {', '.join(failures)}", file=sys.stderr)
         if missing:

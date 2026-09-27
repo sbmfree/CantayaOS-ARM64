@@ -6,8 +6,8 @@
 
 ## Current Milestone
 
-**Objective:** Exercise the terminal's PL011 serial command path in QEMU smoke
-without weakening the keyboard or lifecycle regression.
+**Objective:** Verify keyboard Shift and Caps Lock decoding through a mixed-
+case terminal command in the existing QEMU smoke run.
 
 ## Verified Baseline For Planning
 
@@ -31,6 +31,9 @@ without weakening the keyboard or lifecycle regression.
   the serial log. It also clears unfinished text with Ctrl-U, corrects a later
   character with Backspace, and requires the corrected `echo` response with
   no unknown-command output, in addition to all lifecycle counts.
+- The same smoke run sends `echo serialprobe` through PL011 standard input and
+  requires its distinct response in the captured serial log. The keyboard
+  assertions and lifecycle counts remain required.
 - Current EL0 coverage includes validated user-memory copy-in/copy-out, virtual
   allocation and free, thread create/wait/close/terminate, process
   create/wait/close/terminate, and system-information query.
@@ -144,10 +147,9 @@ lives in [docs/architecture.md](docs/architecture.md).
 
 ## Latest Verified Milestone
 
-The headless QEMU smoke test now proves Ctrl-U and Backspace editing through
-the VirtIO keyboard: stale text is discarded and the corrected `echo` result
-appears without an unknown-command response. It also retains the `help`
-response and all lifecycle counts.
+The headless QEMU smoke test now proves a PL011 serial `echo` command after
+the keyboard `help` and editing checks. Its response is distinguished from
+the typed command, and all existing lifecycle counts remain required.
 
 ## Latest Planning Decision
 
@@ -156,17 +158,16 @@ the closed-slot aliasing gap and selected issuance generations. Output-pointer
 prevalidation now has EL0 evidence for both creation calls; the later
 copy-out rollback branches remain source-reviewed. Entry and stack rejection,
 ordinary typed-wait preflight, and cross-page wait arguments have EL0 evidence.
-Terminal `help` input and keyboard editing are now checked automatically
-through QEMU key injection. The serial command path has not been exercised by
-the automated smoke test.
+Terminal `help`, keyboard editing, and PL011 serial command input are now
+checked automatically. Shift and Caps Lock decoding is implemented but is not
+yet covered by injected smoke commands.
 
 ## Recommended Next Milestone
 
-Extend `make smoke` to send a unique `echo` command through PL011 serial after
-the keyboard checks. Require its output in the captured serial log and retain
-all existing lifecycle and keyboard assertions. Keep QEMU images and input
-channels private to the smoke run; do not change shell commands or kernel
-input behavior.
+Extend the private-QMP smoke test with one `echo` command whose payload uses
+Shift and Caps Lock to produce a distinct mixed-case response. Require that
+response and retain the keyboard editing, serial command, and two-round
+lifecycle assertions. Keep this test-only and reset Caps Lock afterward.
 
 ### Follow-On Candidates
 
@@ -222,7 +223,7 @@ input behavior.
 
 ## Current Blockers
 
-None recorded for bounded serial-command smoke automation.
+None recorded for bounded keyboard-modifier smoke automation.
 
 ## Verification Requirements
 

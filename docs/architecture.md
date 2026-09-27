@@ -181,5 +181,7 @@ starts headless QEMU; its marker contract is the regression check for the MMU,
 EL0, scheduler, user-memory, process/thread, fixed-image I/O, terminal startup,
 and VirtIO keyboard input: a private QMP monitor sends `help` and an edited
 `echo` command, and the serial log must contain both responses. It is not
-hardware certification or a Windows-compatibility claim. See
+the only input route checked: smoke also sends a distinct `echo` command to
+PL011 and requires its response. This is not hardware certification or a
+Windows-compatibility claim. See
 [verified-features.md](verified-features.md) for the complete evidence scope.

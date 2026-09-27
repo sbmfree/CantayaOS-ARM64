@@ -15,10 +15,11 @@ next, read [STATUS.md](../STATUS.md).
   leaves LED feedback unimplemented. `make smoke` now injects `help` through a
   private QMP monitor and requires its terminal response. The same smoke run
   verifies Ctrl-U clears unfinished text and Backspace corrects an `echo`
-  command before submission. A separate earlier QEMU injection also ran
-  `echo window` successfully.
-  The periodic System heartbeat and Thread-A/B liveness loops are disabled. After
-  the validation programs exit, the framebuffer clears boot logs, draws a
+  command before submission. The smoke run also sends `echo serialprobe`
+  through PL011 and requires its distinct response. A separate earlier QEMU
+  injection ran `echo window` successfully. The periodic System heartbeat and
+  Thread-A/B liveness loops are disabled. After the validation programs exit,
+  the framebuffer clears boot logs, draws a
   CantayaOS version banner, and mirrors terminal text in a lower pane that
   scrolls without moving the banner. QEMU's OVMF GOP uses 1024x768 when that
   mode is available; a QEMU screendump confirmed this resolution and the pane.
@@ -326,7 +327,8 @@ The terminal and keyboard change also passed `make smoke`; the smoke test now
 injects `help` and an edited `echo` command through the keyboard and requires
 both responses, with no unknown-command output. A separate earlier injection
 verified `echo window`. A QEMU framebuffer screendump confirmed the 1024x768
-mode and banner with the lower terminal pane.
+mode and banner with the lower terminal pane. The same smoke run additionally
+sends a PL011 serial `echo` command and checks its distinct response.
 
 This validates the QEMU `virt`/TCG path. It is not hardware certification or
 evidence of Windows application compatibility.
