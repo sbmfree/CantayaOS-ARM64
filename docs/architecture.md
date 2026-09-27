@@ -183,7 +183,7 @@ and VirtIO keyboard input: a private QMP monitor sends `help`, an edited
 `echo` command, a Shift/Caps Lock mixed-case payload, and Ctrl-L with an
 unfinished line, then runs `clear` and a follow-up `echo`. The serial log must
 contain the responses and redraw. Smoke also sends `echo`, `info`, `uptime`,
-and `mem` to PL011, checks their responses, and rejects a duplicate prompt
-after a CRLF-terminated command. This is not hardware
+and `mem` to PL011, checks their responses, rejects a duplicate prompt after
+CRLF, and verifies unknown-command recovery. This is not hardware
 certification or a Windows-compatibility claim. See
 [verified-features.md](verified-features.md) for the complete evidence scope.

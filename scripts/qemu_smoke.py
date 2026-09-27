@@ -28,12 +28,16 @@ UPTIME_RESPONSE = re.compile(r"\nUptime: \d+\.\d{2} seconds\ncantaya> ")
 MEM_RESPONSE = re.compile(r"\nFree physical memory: \d+ MiB \(\d+ pages\)\ncantaya> ")
 CRLF_RESPONSE = "\ncrlfprobe\ncantaya> "
 CRLF_EXTRA_PROMPT = CRLF_RESPONSE + "\ncantaya> "
+UNKNOWN_RESPONSE = "Unknown command: boguscmd\ncantaya> "
+RECOVERY_RESPONSE = "\nrecovered\ncantaya> "
 SERIAL_STEPS = (
     (KEYBOARD_EDIT_RESPONSE, b"echo serialprobe\r"),
     (CLEAR_FOLLOWUP_RESPONSE, b"info\r"),
     (INFO_RESPONSE, b"uptime\r"),
     (UPTIME_RESPONSE, b"mem\r"),
     (MEM_RESPONSE, b"echo crlfprobe\r\n"),
+    (CRLF_RESPONSE, b"boguscmd\r"),
+    (UNKNOWN_RESPONSE, b"echo recovered\r"),
 )
 KEYBOARD_STEPS = (
     (TERMINAL_PROMPT, ("h", "e", "l", "p", "ret")),
@@ -105,6 +109,8 @@ REQUIRED_MARKERS = (
     CLEAR_FOLLOWUP_RESPONSE,
     INFO_RESPONSE,
     CRLF_RESPONSE,
+    UNKNOWN_RESPONSE,
+    RECOVERY_RESPONSE,
 )
 REQUIRED_PATTERNS = (
     ("uptime command response", UPTIME_RESPONSE),
@@ -160,7 +166,6 @@ FAILURE_MARKERS = (
     "[System] heartbeat",
     "[Thread-A] alive",
     "[Thread-B] alive",
-    "Unknown command:",
     CRLF_EXTRA_PROMPT,
 )
 
@@ -260,6 +265,8 @@ def main() -> int:
                     output = serial_log.read_text(errors="replace")
                     if any(marker in output for marker in FAILURE_MARKERS):
                         break
+                    if output.count("Unknown command:") > 1:
+                        break
                     if keyboard_step < len(KEYBOARD_STEPS) and (
                         KEYBOARD_STEPS[keyboard_step][0] in output
                     ):
@@ -286,7 +293,9 @@ def main() -> int:
                     if all(marker in output for marker in REQUIRED_MARKERS) and all(
                         output.count(marker) >= count
                         for marker, count in REQUIRED_MARKER_COUNTS.items()
-                    ) and all(pattern.search(output) for _, pattern in REQUIRED_PATTERNS):
+                    ) and all(pattern.search(output) for _, pattern in REQUIRED_PATTERNS) and (
+                        output.count("Unknown command:") == 1
+                    ):
                         break
                 if process.poll() is not None:
                     break
@@ -317,6 +326,8 @@ def main() -> int:
         for description, pattern in REQUIRED_PATTERNS
         if not pattern.search(output)
     )
+    if output.count("Unknown command:") != 1:
+        missing.append("exactly one intentional unknown-command response")
     if failures or missing or input_error:
         print("CantayaOS QEMU smoke test failed.", file=sys.stderr)
         if input_error:

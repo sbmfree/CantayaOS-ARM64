@@ -24,12 +24,12 @@ next, read [STATUS.md](../STATUS.md).
   and leaves a prompt that runs `echo clearok`. Smoke also runs `info`,
   `uptime`, and `mem` via PL011 and checks their version and numeric response
   formats. A CRLF-terminated PL011 `echo` produces one response and one
-  prompt. The periodic System heartbeat and Thread-A/B liveness loops are
-  disabled. After the validation programs
-  exit, the framebuffer clears boot logs, draws a CantayaOS version banner,
-  and mirrors terminal text in a lower pane that scrolls without moving the
-  banner. QEMU's OVMF GOP uses 1024x768 when that
-  mode is available; a QEMU screendump confirmed this resolution and the pane.
+  prompt. One deliberate unknown command reports its error, and a later
+  `echo recovered` succeeds. The periodic System heartbeat and Thread-A/B
+  liveness loops are disabled. After the validation programs exit, the
+  framebuffer clears boot logs, draws a CantayaOS version banner, and mirrors
+  terminal text in a lower pane that scrolls without moving the banner. QEMU's
+  OVMF GOP uses 1024x768 when available; a QEMU screendump confirmed the pane.
 - The UEFI bootloader loads `kernel.elf` and `init.elf`, exits boot services,
   and passes framebuffer, memory-map, kernel, and init-image information to
   the kernel.
@@ -345,6 +345,8 @@ PL011 `info`, `uptime`, and `mem` commands return the checked version and
 numeric uptime/free-memory formats, each followed by a prompt.
 A CRLF-terminated PL011 `echo crlfprobe` returns one checked response and no
 extra blank-command prompt.
+The only unknown-command response is the deliberate `boguscmd` error; a
+subsequent `echo recovered` succeeds at the next prompt.
 
 This validates the QEMU `virt`/TCG path. It is not hardware certification or
 evidence of Windows application compatibility.

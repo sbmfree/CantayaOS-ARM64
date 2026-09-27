@@ -6,8 +6,8 @@
 
 ## Current Milestone
 
-**Objective:** Verify an unknown terminal command reports an error and the
-next valid command still runs in the existing QEMU smoke run.
+**Objective:** Verify bounded terminal input rejects characters beyond its
+line buffer and remains usable afterward, without broadening shell behavior.
 
 ## Verified Baseline For Planning
 
@@ -46,6 +46,9 @@ next valid command still runs in the existing QEMU smoke run.
   each followed by a prompt.
 - A PL011 `echo crlfprobe` terminated by CRLF returns one checked response and
   one prompt; smoke rejects an extra prompt from a second blank command.
+- A deliberate PL011 `boguscmd` returns exactly one unknown-command error;
+  `echo recovered` succeeds at the next prompt. Smoke rejects any additional
+  unknown-command response.
 - Current EL0 coverage includes validated user-memory copy-in/copy-out, virtual
   allocation and free, thread create/wait/close/terminate, process
   create/wait/close/terminate, and system-information query.
@@ -159,9 +162,10 @@ lives in [docs/architecture.md](docs/architecture.md).
 
 ## Latest Verified Milestone
 
-The headless QEMU smoke test now sends a PL011 CRLF-terminated command and
-requires its response without a duplicate prompt. Keyboard, status-command,
-and lifecycle assertions remain required.
+The headless QEMU smoke test now checks one intentional unknown-command error
+followed by a successful PL011 `echo recovered`. It rejects any additional
+unknown-command response and retains the keyboard, status, CRLF, and lifecycle
+checks.
 
 ## Latest Planning Decision
 
@@ -170,16 +174,16 @@ the closed-slot aliasing gap and selected issuance generations. Output-pointer
 prevalidation now has EL0 evidence for both creation calls; the later
 copy-out rollback branches remain source-reviewed. Entry and stack rejection,
 ordinary typed-wait preflight, and cross-page wait arguments have EL0 evidence.
-Terminal commands, editing, and PL011 CRLF suppression are checked through
-smoke input. The unknown-command branch and recovery are not yet exercised;
-the current smoke run rejects any unknown-command output.
+Terminal commands, editing, PL011 CRLF suppression, and unknown-command
+recovery are checked through smoke input. The fixed input-line capacity and
+overflow bell have not yet been exercised at the boundary.
 
 ## Recommended Next Milestone
 
-Send one deliberate unknown command through PL011, require exactly its error
-response, then send a valid `echo` command and require recovery. Adjust the
-smoke failure check to reject any additional unexpected unknown-command
-output. Retain the keyboard, status-command, CRLF, and lifecycle checks.
+Exercise the terminal's 128-byte line bound with paced PL011 input so the
+UART FIFO is not overrun. Require the overflow bell, no execution of dropped
+characters, and a successful next command. Retain all current keyboard,
+serial, and two-round lifecycle checks; do not expand the command buffer.
 
 ### Follow-On Candidates
 
@@ -235,7 +239,7 @@ output. Retain the keyboard, status-command, CRLF, and lifecycle checks.
 
 ## Current Blockers
 
-None recorded for bounded unknown-command recovery smoke automation.
+None recorded for bounded terminal-line overflow verification.
 
 ## Verification Requirements
 
