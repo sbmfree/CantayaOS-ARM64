@@ -19,7 +19,8 @@ next, read [STATUS.md](../STATUS.md).
   through PL011 and requires its distinct response. A later keyboard command
   checks Shift and Caps Lock with the mixed-case `AbCd` response, including
   lowercase after Caps Lock is reset. A separate earlier QEMU injection ran
-  `echo window` successfully. The periodic System heartbeat and Thread-A/B
+  `echo window` successfully. Smoke also checks Ctrl-L's clear sequence and
+  restored unfinished command. The periodic System heartbeat and Thread-A/B
   liveness loops are disabled. After the validation programs exit, the
   framebuffer clears boot logs, draws a CantayaOS version banner, and mirrors
   terminal text in a lower pane that
@@ -332,6 +333,8 @@ verified `echo window`. A QEMU framebuffer screendump confirmed the 1024x768
 mode and banner with the lower terminal pane. The same smoke run additionally
 sends a PL011 serial `echo` command and checks its distinct response. It also
 requires the mixed-case `AbCd` response from Shift/Caps Lock keyboard events.
+Ctrl-L emits the UART clear sequence, redraws the unfinished `echo saved`
+input, and still produces its `saved` response after Enter.
 
 This validates the QEMU `virt`/TCG path. It is not hardware certification or
 evidence of Windows application compatibility.

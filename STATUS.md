@@ -6,8 +6,8 @@
 
 ## Current Milestone
 
-**Objective:** Verify Ctrl-L clears and redraws the terminal while preserving
-an unfinished command in the existing QEMU smoke run.
+**Objective:** Verify the built-in `clear` command resets the terminal and
+leaves a usable prompt in the existing QEMU smoke run.
 
 ## Verified Baseline For Planning
 
@@ -37,6 +37,8 @@ an unfinished command in the existing QEMU smoke run.
 - A later keyboard command produces the checked mixed-case `AbCd` response:
   Shift uppercases `A`, Caps Lock uppercases `C`, and a second Caps Lock press
   restores lowercase `d`. Smoke retains the serial and lifecycle assertions.
+- A subsequent Ctrl-L probe checks the UART clear sequence, a redrawn
+  unfinished `echo saved` line, and its successful response after Enter.
 - Current EL0 coverage includes validated user-memory copy-in/copy-out, virtual
   allocation and free, thread create/wait/close/terminate, process
   create/wait/close/terminate, and system-information query.
@@ -150,10 +152,9 @@ lives in [docs/architecture.md](docs/architecture.md).
 
 ## Latest Verified Milestone
 
-The headless QEMU smoke test now proves Shift and Caps Lock decoding with a
-mixed-case `echo` response, including the return to lowercase after Caps Lock
-is released. It retains keyboard editing, PL011 serial, and all lifecycle
-checks.
+The headless QEMU smoke test now proves Ctrl-L clears and redraws the prompt
+with an unfinished command intact; Enter then executes that command. It
+retains the keyboard, PL011 serial, and lifecycle checks.
 
 ## Latest Planning Decision
 
@@ -162,16 +163,16 @@ the closed-slot aliasing gap and selected issuance generations. Output-pointer
 prevalidation now has EL0 evidence for both creation calls; the later
 copy-out rollback branches remain source-reviewed. Entry and stack rejection,
 ordinary typed-wait preflight, and cross-page wait arguments have EL0 evidence.
-Terminal `help`, keyboard editing, Shift/Caps Lock, and PL011 serial command
-input are now checked automatically. Ctrl-L screen clearing and unfinished-
-line restoration are implemented but not yet checked by smoke input.
+Terminal `help`, keyboard editing, Shift/Caps Lock, Ctrl-L line restoration,
+and PL011 serial command input are now checked automatically. The built-in
+`clear` command has not yet been exercised by smoke input.
 
 ## Recommended Next Milestone
 
-Extend the private-QMP smoke test to type an unfinished `echo` command, press
-Ctrl-L, then submit it. Require the terminal's clear sequence and the intact
-echoed payload in the serial log, while retaining the keyboard, PL011, and
-two-round lifecycle checks. Keep this test-only; do not change shell behavior.
+Send the built-in `clear` command through the VirtIO keyboard, require the
+UART clear sequence and a restored prompt, then run a distinct `echo` command
+to prove the terminal remains usable. Retain every existing lifecycle and
+input assertion; keep this test-only.
 
 ### Follow-On Candidates
 
@@ -227,7 +228,7 @@ two-round lifecycle checks. Keep this test-only; do not change shell behavior.
 
 ## Current Blockers
 
-None recorded for bounded Ctrl-L smoke automation.
+None recorded for bounded `clear` command smoke automation.
 
 ## Verification Requirements
 
@@ -235,7 +236,7 @@ Run `make smoke` for meaningful kernel, MMU, scheduler, syscall, process, or
 I/O changes, including keyboard input. It is the regression check for the QEMU
 `virt`/TCG path and must demonstrate the required runtime markers; a
 successful compile alone is not completion. Smoke now injects `help`, Ctrl-U,
-Backspace, Shift, and Caps Lock key events and checks responses; additional
+Backspace, Shift, Caps Lock, and Ctrl-L key events and checks responses; additional
 keyboard behavior changes need targeted key-event checks. This is not hardware
 certification or evidence of Windows application compatibility.
 

@@ -18,6 +18,8 @@ KEYBOARD_HELP_RESPONSE = "help          Show commands"
 KEYBOARD_EDIT_RESPONSE = "\nedited\ncantaya> "
 SERIAL_ECHO_RESPONSE = "\nserialprobe\ncantaya> "
 KEYBOARD_MODIFIER_RESPONSE = "\nAbCd\ncantaya> "
+CTRL_L_REDRAW = "\x1b[2J\x1b[Hcantaya> echo saved"
+CTRL_L_RESPONSE = "\nsaved\ncantaya> "
 KEYBOARD_STEPS = (
     (TERMINAL_PROMPT, ("h", "e", "l", "p", "ret")),
     (
@@ -33,6 +35,13 @@ KEYBOARD_STEPS = (
         (
             "e", "c", "h", "o", "spc", "shift-a", "b",
             "caps_lock", "c", "caps_lock", "d", "ret",
+        ),
+    ),
+    (
+        KEYBOARD_MODIFIER_RESPONSE,
+        (
+            "e", "c", "h", "o", "spc", "s", "a", "v", "e", "d",
+            "ctrl-l", "ret",
         ),
     ),
 )
@@ -70,6 +79,8 @@ REQUIRED_MARKERS = (
     KEYBOARD_EDIT_RESPONSE,
     SERIAL_ECHO_RESPONSE,
     KEYBOARD_MODIFIER_RESPONSE,
+    CTRL_L_REDRAW,
+    CTRL_L_RESPONSE,
 )
 REQUIRED_MARKER_COUNTS = {
     "Ps: reaped thread": 5,

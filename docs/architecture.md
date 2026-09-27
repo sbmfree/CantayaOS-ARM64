@@ -180,8 +180,9 @@ The development test platform is QEMU `aarch64` `virt` with OVMF, using the
 starts headless QEMU; its marker contract is the regression check for the MMU,
 EL0, scheduler, user-memory, process/thread, fixed-image I/O, terminal startup,
 and VirtIO keyboard input: a private QMP monitor sends `help`, an edited
-`echo` command, and a Shift/Caps Lock mixed-case payload. The serial log must
-contain their responses. Smoke also sends a distinct `echo` command to PL011
+`echo` command, a Shift/Caps Lock mixed-case payload, and Ctrl-L with an
+unfinished line. The serial log must contain the responses and redraw. Smoke
+also sends a distinct `echo` command to PL011
 and requires its response. This is not hardware certification or a
 Windows-compatibility claim. See
 [verified-features.md](verified-features.md) for the complete evidence scope.
