@@ -18,6 +18,9 @@ _start:
     mov x9, #0x76
     cmp x1, x9
     b.eq handle_collision_child_entry
+    mov x9, #0x77
+    cmp x1, x9
+    b.eq unexpected_creation_entry
     // Initial processes start with x1=0. Any other controlled value here is
     // an opaque parent-owned handle to probe from this empty child table.
     cbnz x1, handle_isolation_probe_entry
@@ -1608,6 +1611,186 @@ mixed_original_target_handles_closed:
     b mixed_lifecycle_round
 mixed_lifecycle_done:
 
+    // Failed creation must not publish a handle or start its target. The
+    // second mixed round left the lowest slot closed in x26; successful
+    // creations below must receive exactly its next generations.
+    sub sp, sp, #48
+    str xzr, [sp]
+    movn x0, #0
+    mov x1, sp
+    mov x2, #0x1000
+    mov x8, #0x15
+    svc #0
+    cbnz x0, 2f
+    ldr x21, [sp]
+    cbz x21, 2f
+    add x22, x21, #0x1000
+    sub x23, x22, #4
+    mov w9, #0x5a5a
+    str w9, [x23]
+    movz x19, #0xd
+    movk x19, #0xc000, lsl #16
+    movz x20, #0x5
+    movk x20, #0xc000, lsl #16
+    movz x27, #0x8
+    movk x27, #0xc000, lsl #16
+
+    mov x0, xzr
+    adr x1, unexpected_creation_entry
+    mov x2, x22
+    mov x8, #0x4e
+    svc #0
+    cmp x0, x19
+    b.ne 2f
+    mov x0, #1
+    adr x1, unexpected_creation_entry
+    mov x2, x22
+    mov x8, #0x4e
+    svc #0
+    cmp x0, x20
+    b.ne 2f
+    adr x0, message
+    adr x1, unexpected_creation_entry
+    mov x2, x22
+    mov x8, #0x4e
+    svc #0
+    cmp x0, x20
+    b.ne 2f
+    mov x0, x23
+    adr x1, unexpected_creation_entry
+    mov x2, x22
+    mov x8, #0x4e
+    svc #0
+    cmp x0, x20
+    b.ne 2f
+    ldr w9, [x23]
+    mov w11, #0x5a5a
+    cmp w9, w11
+    b.ne 2f
+
+    movz x9, #1, lsl #32
+    add x10, x26, x9
+    mov x0, x10
+    mov x8, #0xf
+    svc #0
+    cmp x0, x27
+    b.ne 2f
+    str xzr, [sp, #8]
+    add x0, sp, #8
+    adr x1, mixed_thread_wait_target_entry
+    mov x2, x22
+    mov x8, #0x4e
+    svc #0
+    cbnz x0, 2f
+    ldr x24, [sp, #8]
+    cmp x24, x10
+    b.ne 2f
+    mov x0, x24
+    mov x1, #0x85
+    mov x8, #0x30
+    svc #0
+    cbnz x0, 2f
+    mov x0, x24
+    mov x1, xzr
+    mov x2, xzr
+    str xzr, [sp, #24]
+    add x3, sp, #24
+    mov x8, #0x4
+    svc #0
+    cbnz x0, 2f
+    ldr x9, [sp, #24]
+    cmp x9, #0x85
+    b.ne 2f
+    mov x0, x24
+    mov x8, #0xf
+    svc #0
+    cbnz x0, 2f
+
+    mov x0, xzr
+    mov x1, xzr
+    mov x2, #0x77
+    mov x8, #0x4c
+    svc #0
+    cmp x0, x19
+    b.ne 2f
+    mov x0, #1
+    mov x1, xzr
+    mov x2, #0x77
+    mov x8, #0x4c
+    svc #0
+    cmp x0, x20
+    b.ne 2f
+    adr x0, message
+    mov x1, xzr
+    mov x2, #0x77
+    mov x8, #0x4c
+    svc #0
+    cmp x0, x20
+    b.ne 2f
+    mov x0, x23
+    mov x1, xzr
+    mov x2, #0x77
+    mov x8, #0x4c
+    svc #0
+    cmp x0, x20
+    b.ne 2f
+    ldr w9, [x23]
+    mov w11, #0x5a5a
+    cmp w9, w11
+    b.ne 2f
+
+    movz x9, #1, lsl #32
+    add x10, x24, x9
+    mov x0, x10
+    mov x8, #0xf
+    svc #0
+    cmp x0, x27
+    b.ne 2f
+    str xzr, [sp, #16]
+    add x0, sp, #16
+    mov x1, xzr
+    mov x2, #0x60
+    mov x8, #0x4c
+    svc #0
+    cbnz x0, 2f
+    ldr x25, [sp, #16]
+    cmp x25, x10
+    b.ne 2f
+    mov x0, x25
+    mov x1, #0x86
+    mov x8, #0x29
+    svc #0
+    cbnz x0, 2f
+    mov x0, x25
+    mov x1, xzr
+    mov x2, xzr
+    str xzr, [sp, #24]
+    add x3, sp, #24
+    mov x8, #0x4
+    svc #0
+    cbnz x0, 2f
+    ldr x9, [sp, #24]
+    cmp x9, #0x86
+    b.ne 2f
+    mov x0, x25
+    mov x8, #0xf
+    svc #0
+    cbnz x0, 2f
+    movn x0, #0
+    mov x1, x21
+    mov x2, #0x1000
+    mov x8, #0x1b
+    svc #0
+    cbnz x0, 2f
+    add sp, sp, #48
+    movn x0, #0
+    adr x1, create_output_failure_message
+    adr x2, create_output_failure_message_end
+    sub x2, x2, x1
+    mov x8, #0x8
+    svc #0
+    cbnz x0, 2f
+
     // A fresh selector-zero child has its own empty handle table. Give it a
     // live process value, then a live thread value; in each case its failed
     // operations must leave the parent's target usable.
@@ -2072,6 +2255,15 @@ handle_collision_child_entry:
 handle_collision_failed:
     brk #0
 
+unexpected_creation_entry:
+    movn x0, #0
+    adr x1, unexpected_creation_message
+    adr x2, unexpected_creation_message_end
+    sub x2, x2, x1
+    mov x8, #0x8
+    svc #0
+    brk #0
+
 worker_entry:
 1:
     nop
@@ -2336,6 +2528,12 @@ el0_collision_owner_message_end:
 el0_numeric_collision_message:
     .ascii "[user-init] EL0 numeric handle collision validated\n"
 el0_numeric_collision_message_end:
+create_output_failure_message:
+    .ascii "[user-init] create output failures left no handles\n"
+create_output_failure_message_end:
+unexpected_creation_message:
+    .ascii "[user-init] ERROR failed creation started target\n"
+unexpected_creation_message_end:
 process_exit_wait_message:
     .ascii "[user-init] process-wide blocked wait termination validated\n"
 process_exit_wait_message_end:

@@ -6,9 +6,9 @@
 
 ## Current Milestone
 
-**Objective:** Audit and verify bounded `NtCreateThread` and `NtCreateProcess`
-output-pointer failure paths without changing their syscall contracts or the
-two-round EL0 lifecycle regression.
+**Objective:** Verify `NtCreateThread` rejects non-executable entry points and
+invalid user stack tops before publishing a handle, without changing its
+syscall contract or the two-round EL0 lifecycle regression.
 
 ## Verified Baseline For Planning
 
@@ -87,6 +87,12 @@ two-round EL0 lifecycle regression.
   requires four child and two parent isolation markers while retaining the
   two-round lifecycle counts. This does not assert that equal numeric values
   in different nonempty tables refer to the same object.
+- Both init processes reject null, unmapped, read-only, and cross-page output
+  pointers for thread and process creation. A cross-page sentinel stays
+  unchanged; the next valid thread and process handles use the exact next
+  generations, complete with checked statuses, and release their resources.
+  Smoke requires two output-failure markers and absence of a failure-only
+  target marker. Post-insertion copy-out rollback is source-reviewed only.
 - Each init process also starts two controlled fresh processes whose first
   thread handles both equal numeric `1`. The child completes and closes its
   own thread; the parent still sees a timeout on its live thread and then
@@ -109,28 +115,28 @@ lives in [docs/architecture.md](docs/architecture.md).
 
 ## Latest Verified Milestone
 
-Malformed and non-issued handle values are rejected by a private table while
-its live entry remains usable with unchanged access rights. The boot probe
-covers null, the pseudo-handle, zero and out-of-range slots, and mismatched or
-exhausted generations. `make smoke` passed with the new boot marker and all
-existing EL0 two-round lifecycle counts.
+Invalid creation output pointers are rejected before handle publication or
+target start. Both init processes test null, unmapped, read-only, and
+cross-page pointers for thread and process creation, retain a boundary
+sentinel, and complete valid creations with precisely predicted next handles.
+`make smoke` passed with two new markers and all existing lifecycle counts.
 
 ## Latest Planning Decision
 
 The [lifecycle contract review](docs/lifecycle-contract-review.md) identified
-the closed-slot aliasing gap and selected issuance generations. Reuse,
-empty-child-table isolation, exhaustion, numeric collisions, and invalid
-encodings now have boot or EL0 evidence. Creation failure cleanup is the next
-bounded lifecycle review.
+the closed-slot aliasing gap and selected issuance generations. Output-pointer
+prevalidation now has EL0 evidence for both creation calls; the later
+copy-out rollback branches remain source-reviewed. Entry and stack rejection
+is the next creation preflight case.
 
 ## Recommended Next Milestone
 
-Review the output-pointer validation and rollback paths for `NtCreateThread`
-and `NtCreateProcess`. Add bounded EL0 calls with invalid or unwritable output
-pointers, require the documented error without publishing a handle or starting
-a target, then verify a normal creation of each type still works. Keep the
-fixed image selectors, existing access rights, and two-round smoke workload;
-do not add new creation APIs.
+With a valid writable output pointer, call `NtCreateThread` using a mapped
+non-executable entry and invalid stack tops (misaligned and unmapped). Require
+`STATUS_ACCESS_VIOLATION`, unchanged output sentinel, no started target, and
+no handle-generation advance; then create and complete one valid thread.
+Require markers from both init processes and preserve the two-round smoke
+regression. Keep the current-process and mapping restrictions unchanged.
 
 ### Follow-On Candidates
 
@@ -186,7 +192,7 @@ do not add new creation APIs.
 
 ## Current Blockers
 
-None recorded for bounded creation-failure verification.
+None recorded for bounded thread-entry and stack preflight verification.
 
 ## Verification Requirements
 

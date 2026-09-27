@@ -46,6 +46,14 @@ next, read [STATUS.md](../STATUS.md).
   stack before creating an EL0 sibling thread. It returns a typed thread
   handle; `NtWaitForSingleObject` supports a non-alertable infinite wait and
   `NtClose` releases the handle after the wait completes.
+- Both init processes reject null, unmapped, read-only, and cross-page output
+  pointers for `NtCreateThread` and `NtCreateProcess` before publishing a
+  handle. A sentinel at the writable edge of each cross-page range remains
+  unchanged. The next valid thread and process creations receive the exact
+  next generations of the previously closed slot, complete with checked
+  statuses, and release their resources. A failure-only entry is watched by
+  smoke and must never run. The post-insertion copy-out rollback branches are
+  source-reviewed but not deterministically reached by this EL0 probe.
 - `NtTerminateThread` accepts only a parent-owned typed thread handle. It
   rejects `CURRENT`, safely removes a ready or waiting non-current target from
   the single-core queue, signals its requested final status, and defers raw
@@ -258,7 +266,9 @@ collision phase additionally requires two each of
 `[user-init] EL0 numeric handle collision validated`. The earlier
 two-round milestone passed two consecutive smoke runs. The final private-table
 negative probe adds the boot-time `Ps: malformed typed handle values rejected`
-marker; `make smoke` passed with it and all prior markers.
+marker. Output-pointer validation adds two
+`[user-init] create output failures left no handles` markers and rejects the
+failure-only target marker; `make smoke` passed with these and all prior checks.
 
 This validates the QEMU `virt`/TCG path. It is not hardware certification or
 evidence of Windows application compatibility.

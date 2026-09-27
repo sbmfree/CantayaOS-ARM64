@@ -84,6 +84,12 @@ that its saved and replacement values refer to the same table slot.
     generations on lookup and close. The live handle and its rights remain
     unchanged after every rejection. `make smoke` passed with the malformed-
     value boot marker and all prior checks.
+11. Both init processes reject invalid or unwritable output pointers for
+    `NtCreateThread` and `NtCreateProcess`, retain a cross-page sentinel, and
+    then receive the exact next handle generations on valid creations. A
+    failure-only entry does not run. `make smoke` passed with two output-
+    failure markers and prior checks. Post-insertion copy-out rollback is
+    source-reviewed, not exercised by these prevalidation failures.
 
 The [hard constraints](../STATUS.md#hard-constraints-and-do-not-implement-yet)
 remain in force for later milestones.
