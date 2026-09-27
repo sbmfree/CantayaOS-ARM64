@@ -6,8 +6,8 @@
 
 ## Current Milestone
 
-**Objective:** Verify bounded terminal input rejects characters beyond its
-line buffer and remains usable afterward, without broadening shell behavior.
+**Objective:** Carry the verified QEMU runtime contract into CI, then establish
+a bounded EL0 console interface before moving command parsing out of EL1.
 
 ## Verified Baseline For Planning
 
@@ -49,6 +49,9 @@ line buffer and remains usable afterward, without broadening shell behavior.
 - A deliberate PL011 `boguscmd` returns exactly one unknown-command error;
   `echo recovered` succeeds at the next prompt. Smoke rejects any additional
   unknown-command response.
+- A paced PL011 probe fills the 128-byte command line, sends eight excess
+  bytes, and requires eight bells. Only the accepted `echo` payload executes;
+  `echo boundok` succeeds at the next prompt. All previous checks remain.
 - Current EL0 coverage includes validated user-memory copy-in/copy-out, virtual
   allocation and free, thread create/wait/close/terminate, process
   create/wait/close/terminate, and system-information query.
@@ -162,10 +165,9 @@ lives in [docs/architecture.md](docs/architecture.md).
 
 ## Latest Verified Milestone
 
-The headless QEMU smoke test now checks one intentional unknown-command error
-followed by a successful PL011 `echo recovered`. It rejects any additional
-unknown-command response and retains the keyboard, status, CRLF, and lifecycle
-checks.
+The headless QEMU smoke test now checks the 128-byte terminal input boundary,
+eight rejected characters and bells, and successful next-command recovery. It
+retains the keyboard, serial, and two-round lifecycle checks.
 
 ## Latest Planning Decision
 
@@ -174,16 +176,17 @@ the closed-slot aliasing gap and selected issuance generations. Output-pointer
 prevalidation now has EL0 evidence for both creation calls; the later
 copy-out rollback branches remain source-reviewed. Entry and stack rejection,
 ordinary typed-wait preflight, and cross-page wait arguments have EL0 evidence.
-Terminal commands, editing, PL011 CRLF suppression, and unknown-command
-recovery are checked through smoke input. The fixed input-line capacity and
-overflow bell have not yet been exercised at the boundary.
+Terminal commands, editing, PL011 CRLF suppression, unknown-command recovery,
+and the fixed input-line capacity are checked through smoke input. A CI job now
+boots QEMU with Ubuntu's AArch64 UEFI firmware; its first remote run still
+needs confirmation.
 
 ## Recommended Next Milestone
 
-Exercise the terminal's 128-byte line bound with paced PL011 input so the
-UART FIFO is not overrun. Require the overflow bell, no execution of dropped
-characters, and a successful next command. Retain all current keyboard,
-serial, and two-round lifecycle checks; do not expand the command buffer.
+Confirm the new CI QEMU smoke job passes, then design a bounded EL0 console
+endpoint with explicit handle semantics and validated user buffers. Begin with
+output, then add input without letting the kernel shell consume the same
+bytes. Keep the fixed image selectors and all existing lifecycle checks.
 
 ### Follow-On Candidates
 
@@ -239,7 +242,7 @@ serial, and two-round lifecycle checks; do not expand the command buffer.
 
 ## Current Blockers
 
-None recorded for bounded terminal-line overflow verification.
+None recorded for local smoke. The first Linux CI smoke run is not yet verified.
 
 ## Verification Requirements
 

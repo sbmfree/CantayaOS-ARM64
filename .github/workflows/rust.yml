@@ -26,3 +26,21 @@ jobs:
       run: |
         cargo build --verbose -p cantaya-user-init --target user/aarch64-cantaya-user.json -Z json-target-spec -Z build-std=core,compiler_builtins -Z build-std-features=compiler-builtins-mem
         cargo build --verbose -p cantaya-user-child --target user/aarch64-cantaya-user.json -Z json-target-spec -Z build-std=core,compiler_builtins -Z build-std-features=compiler-builtins-mem
+
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install QEMU and image tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y qemu-system-arm qemu-efi-aarch64 mtools
+        mkdir -p tools
+        cp /usr/share/AAVMF/AAVMF_CODE.fd tools/OVMF_CODE.fd
+        cp /usr/share/AAVMF/AAVMF_VARS.fd tools/edk2-arm-vars.fd
+    - name: Check formatting
+      run: cargo fmt --all --check
+    - name: Boot and verify QEMU smoke contract
+      run: make smoke SMOKE_TIMEOUT=120

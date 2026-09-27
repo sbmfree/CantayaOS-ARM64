@@ -36,6 +36,7 @@ DISK_IMG_NEW := $(DISK_IMG).new
 ESP_DIR    := $(BUILD_DIR)/esp
 
 QEMU       := qemu-system-aarch64
+SMOKE_TIMEOUT ?= 35
 QEMU_FLAGS := \
   -name CantayaOS \
   -machine virt,highmem=on \
@@ -116,7 +117,8 @@ smoke: iso
 	    --qemu "$(QEMU)" \
 	    --ovmf "$(OVMF)" \
 	    --ovmf-vars "$(OVMF_VARS)" \
-	    --image "$(DISK_IMG)"
+	    --image "$(DISK_IMG)" \
+	    --timeout "$(SMOKE_TIMEOUT)"
 
 # ─────────────────────────────────────────────────────────────────────────────
 clean:

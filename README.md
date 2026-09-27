@@ -91,6 +91,8 @@ The prompt accepts built-in commands, not arbitrary programs or file paths.
 
 `make smoke` is the current regression check. Its scope and expected runtime
 evidence are documented in [docs/verified-features.md](docs/verified-features.md).
+The Rust GitHub Actions workflow also runs this headless QEMU check on Ubuntu;
+CI installs AArch64 UEFI firmware and uses a longer timeout for emulation.
 
 ---
 
