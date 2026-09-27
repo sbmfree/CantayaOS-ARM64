@@ -22,7 +22,6 @@ pub fn init() -> Option<FramebufferInfo> {
         GopPixFmt::Bitmask => PixelFormat::Bitmask,
         // BltOnly means no linear framebuffer — skip
         GopPixFmt::BltOnly => return None,
-        _ => PixelFormat::Bgr,
     };
 
     let base = gop.frame_buffer().as_mut_ptr() as u64;

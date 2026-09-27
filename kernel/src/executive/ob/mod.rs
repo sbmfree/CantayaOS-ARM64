@@ -10,7 +10,7 @@
 pub mod handle;
 pub mod types;
 
-use alloc::{boxed::Box, collections::BTreeMap, string::String, sync::Arc};
+use alloc::{collections::BTreeMap, string::String, sync::Arc};
 use spin::Mutex;
 use types::{ObjectHeader, ObjectType};
 

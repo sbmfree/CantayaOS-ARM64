@@ -11,7 +11,6 @@
 
 #![no_std]
 #![no_main]
-#![feature(naked_functions)]
 #![deny(unsafe_op_in_unsafe_fn)]
 
 extern crate alloc;
@@ -21,7 +20,6 @@ use alloc::vec::Vec;
 use uefi::{
     boot::{AllocateType, MemoryType as UefiMemTy, PAGE_SIZE},
     prelude::*,
-    proto::console::gop::GraphicsOutput,
     proto::media::file::{Directory, File, FileAttribute, FileMode},
     proto::media::fs::SimpleFileSystem,
 };
@@ -32,7 +30,7 @@ use uefi::{
 // UEFI requires a global allocator.  Use `uefi`'s built-in pool allocator.
 // Declared here; enabled by the `alloc` feature of the `uefi` crate.
 
-use cantaya_shared::{BootInfo, FramebufferInfo, BOOT_INFO_MAGIC};
+use cantaya_shared::{BootInfo, BOOT_INFO_MAGIC};
 
 mod elf;
 mod framebuffer;

@@ -54,7 +54,7 @@ impl WaitTarget {
 impl ThreadObject {
     fn new(tid: ThreadId) -> Arc<Self> {
         Arc::new(Self {
-            object_header: ObjectHeader::new(&OB_TYPE_THREAD, core::mem::size_of::<EThread>()),
+            object_header: ObjectHeader::new(&OB_TYPE_THREAD, core::mem::size_of::<Self>()),
             tid,
             completion: Mutex::new(ThreadCompletion {
                 exit_status: None,

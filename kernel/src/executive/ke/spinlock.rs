@@ -4,7 +4,6 @@
 //! deadlock by re-entering the same lock.  Uses AArch64 `LDAXR`/`STLXR`
 //! (load-acquire exclusive / store-release exclusive) for atomicity.
 
-use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 /// Saved IRQ state (DAIF I-bit value before we disabled interrupts).

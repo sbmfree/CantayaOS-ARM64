@@ -1,7 +1,5 @@
 //! `ObjectHeader` and `ObjectType` — core of the NT Object Manager.
 
-use core::sync::atomic::{AtomicUsize, Ordering};
-
 /// Dispatch table for a kernel object type.
 pub struct ObjectType {
     pub name: &'static str,
@@ -12,21 +10,14 @@ pub struct ObjectType {
 /// Every kernel object begins with this header (NT layout mirrors this).
 pub struct ObjectHeader {
     pub ty: &'static ObjectType,
-    /// Reference count managed by `Arc` (Arc IS the ref count here).
-    /// Kept for diagnostic use.
-    pub ref_count: AtomicUsize,
-    /// Raw allocation for the object body (type-erased).
-    /// Zero means no body was allocated separately.
+    /// Size of the associated object for diagnostics; the header does not
+    /// allocate a separate body. Reference counting belongs to its `Arc`.
     pub body_size: usize,
 }
 
 impl ObjectHeader {
     pub fn new(ty: &'static ObjectType, body_size: usize) -> Self {
-        Self {
-            ty,
-            ref_count: AtomicUsize::new(1),
-            body_size,
-        }
+        Self { ty, body_size }
     }
 }
 

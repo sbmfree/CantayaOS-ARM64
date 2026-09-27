@@ -41,6 +41,7 @@ QEMU_FLAGS := \
   -m 512M \
   -device ramfb \
   -device virtio-keyboard-pci \
+  -nic none \
   -drive if=pflash,format=raw,file=$(OVMF),readonly=on \
   -drive if=pflash,format=raw,file=$(OVMF_VARS) \
 	-drive if=none,format=raw,file=$(DISK_IMG),id=cantaya-disk \

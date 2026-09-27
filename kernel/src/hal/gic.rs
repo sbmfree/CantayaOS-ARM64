@@ -127,8 +127,14 @@ pub fn handle_irq() {
             // Timer handlers may switch contexts, so complete the active IRQ
             // before dispatch rather than after a potentially deferred return.
             gicc_write(GICC_EOIR, iar);
-            if let Some(handler) = IRQ_HANDLERS.get(irq).and_then(|h| *h) {
-                handler();
+            if irq < MAX_IRQS {
+                let handler = core::ptr::addr_of!(IRQ_HANDLERS)
+                    .cast::<Option<fn()>>()
+                    .add(irq)
+                    .read();
+                if let Some(handler) = handler {
+                    handler();
+                }
             }
         }
         // irq 1022/1023 are spurious — ignore

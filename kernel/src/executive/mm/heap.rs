@@ -13,7 +13,7 @@ static mut HEAP_STORAGE: HeapStorage = HeapStorage([0u8; HEAP_SIZE]);
 /// Hand the heap region to the global allocator.
 pub fn init() {
     unsafe {
-        let heap_start = HEAP_STORAGE.0.as_mut_ptr();
+        let heap_start = core::ptr::addr_of_mut!(HEAP_STORAGE.0).cast::<u8>();
         crate::ALLOCATOR.0.lock().init(heap_start, HEAP_SIZE);
     }
     log::debug!("Kernel heap: {} KiB", HEAP_SIZE / 1024);
