@@ -6,8 +6,8 @@
 
 ## Current Milestone
 
-**Objective:** Verify the terminal's read-only `info`, `uptime`, and `mem`
-commands through the existing QEMU smoke run.
+**Objective:** Verify PL011 CRLF input runs one command with one following
+prompt in the existing QEMU smoke run.
 
 ## Verified Baseline For Planning
 
@@ -41,6 +41,9 @@ commands through the existing QEMU smoke run.
   unfinished `echo saved` line, and its successful response after Enter.
 - The built-in `clear` command also emits the clear sequence and restores a
   prompt; a later `echo clearok` succeeds through the VirtIO keyboard.
+- Smoke sends `info`, `uptime`, and `mem` through PL011 in response order. It
+  checks the version text and the numeric uptime and free-memory formats,
+  each followed by a prompt.
 - Current EL0 coverage includes validated user-memory copy-in/copy-out, virtual
   allocation and free, thread create/wait/close/terminate, process
   create/wait/close/terminate, and system-information query.
@@ -154,9 +157,9 @@ lives in [docs/architecture.md](docs/architecture.md).
 
 ## Latest Verified Milestone
 
-The headless QEMU smoke test now verifies the built-in `clear` command's
-screen-reset sequence and prompt, then completes a distinct keyboard `echo`
-command. It retains Ctrl-L restoration, PL011 serial, and lifecycle checks.
+The headless QEMU smoke test now verifies `info`, `uptime`, and `mem` through
+PL011, including their distinct response formats and prompts. Keyboard input
+and every lifecycle count remain required.
 
 ## Latest Planning Decision
 
@@ -165,16 +168,15 @@ the closed-slot aliasing gap and selected issuance generations. Output-pointer
 prevalidation now has EL0 evidence for both creation calls; the later
 copy-out rollback branches remain source-reviewed. Entry and stack rejection,
 ordinary typed-wait preflight, and cross-page wait arguments have EL0 evidence.
-Terminal `help`, keyboard editing, Shift/Caps Lock, Ctrl-L restoration, the
-`clear` command, and PL011 serial input are now checked automatically. The
-read-only status commands are the next untested terminal branch.
+Terminal commands and editing are checked through keyboard and PL011 smoke
+input. PL011 CRLF suppression is implemented but not yet tested as an input
+pair; a stray LF must not run a second blank command.
 
 ## Recommended Next Milestone
 
-Send `info`, `uptime`, and `mem` through PL011 in sequence after the keyboard
-checks. Require their distinct response formats and a prompt after each;
-retain all prior input and lifecycle assertions. Keep this test-only and do
-not expose new system information interfaces.
+Send a unique PL011 `echo` command terminated by CRLF, require exactly one
+command response and no extra blank-command prompt, and retain all keyboard,
+status-command, and lifecycle checks. Keep this test-only.
 
 ### Follow-On Candidates
 
@@ -230,7 +232,7 @@ not expose new system information interfaces.
 
 ## Current Blockers
 
-None recorded for bounded terminal status-command smoke automation.
+None recorded for bounded PL011 CRLF smoke automation.
 
 ## Verification Requirements
 

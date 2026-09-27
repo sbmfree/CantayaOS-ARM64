@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import socket
 import subprocess
@@ -22,6 +23,15 @@ CTRL_L_REDRAW = "\x1b[2J\x1b[Hcantaya> echo saved"
 CTRL_L_RESPONSE = "\nsaved\ncantaya> "
 CLEAR_COMMAND_RESPONSE = "clear\n\x1b[2J\x1b[Hcantaya> "
 CLEAR_FOLLOWUP_RESPONSE = "\nclearok\ncantaya> "
+INFO_RESPONSE = "CantayaOS v0.1.0 (AArch64, QEMU virt)\ncantaya> "
+UPTIME_RESPONSE = re.compile(r"\nUptime: \d+\.\d{2} seconds\ncantaya> ")
+MEM_RESPONSE = re.compile(r"\nFree physical memory: \d+ MiB \(\d+ pages\)\ncantaya> ")
+SERIAL_STEPS = (
+    (KEYBOARD_EDIT_RESPONSE, b"echo serialprobe\r"),
+    (CLEAR_FOLLOWUP_RESPONSE, b"info\r"),
+    (INFO_RESPONSE, b"uptime\r"),
+    (UPTIME_RESPONSE, b"mem\r"),
+)
 KEYBOARD_STEPS = (
     (TERMINAL_PROMPT, ("h", "e", "l", "p", "ret")),
     (
@@ -90,6 +100,11 @@ REQUIRED_MARKERS = (
     CTRL_L_RESPONSE,
     CLEAR_COMMAND_RESPONSE,
     CLEAR_FOLLOWUP_RESPONSE,
+    INFO_RESPONSE,
+)
+REQUIRED_PATTERNS = (
+    ("uptime command response", UPTIME_RESPONSE),
+    ("memory command response", MEM_RESPONSE),
 )
 REQUIRED_MARKER_COUNTS = {
     "Ps: reaped thread": 5,
@@ -182,6 +197,10 @@ def send_keyboard_keys(monitor_path: Path, keys: tuple[str, ...]) -> None:
                 time.sleep(0.05)
 
 
+def response_seen(trigger: str | re.Pattern[str], output: str) -> bool:
+    return trigger in output if isinstance(trigger, str) else trigger.search(output) is not None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--qemu", required=True)
@@ -226,7 +245,7 @@ def main() -> int:
             )
         output = ""
         keyboard_step = 0
-        serial_sent = False
+        serial_step = 0
         input_error = None
         deadline = time.monotonic() + args.timeout
 
@@ -247,20 +266,22 @@ def main() -> int:
                         except (OSError, ValueError, RuntimeError) as error:
                             input_error = str(error)
                             break
-                    if KEYBOARD_EDIT_RESPONSE in output and not serial_sent:
+                    if serial_step < len(SERIAL_STEPS) and response_seen(
+                        SERIAL_STEPS[serial_step][0], output
+                    ):
                         try:
                             if process.stdin is None:
                                 raise RuntimeError("PL011 input pipe is unavailable")
-                            process.stdin.write(b"echo serialprobe\r")
+                            process.stdin.write(SERIAL_STEPS[serial_step][1])
                             process.stdin.flush()
-                            serial_sent = True
+                            serial_step += 1
                         except (OSError, RuntimeError) as error:
                             input_error = str(error)
                             break
                     if all(marker in output for marker in REQUIRED_MARKERS) and all(
                         output.count(marker) >= count
                         for marker, count in REQUIRED_MARKER_COUNTS.items()
-                    ):
+                    ) and all(pattern.search(output) for _, pattern in REQUIRED_PATTERNS):
                         break
                 if process.poll() is not None:
                     break
@@ -285,6 +306,11 @@ def main() -> int:
         f"{marker} (expected at least {count})"
         for marker, count in REQUIRED_MARKER_COUNTS.items()
         if output.count(marker) < count
+    )
+    missing.extend(
+        description
+        for description, pattern in REQUIRED_PATTERNS
+        if not pattern.search(output)
     )
     if failures or missing or input_error:
         print("CantayaOS QEMU smoke test failed.", file=sys.stderr)
