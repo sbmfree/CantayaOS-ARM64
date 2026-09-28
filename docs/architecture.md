@@ -88,6 +88,12 @@ Backspace, Enter, Ctrl-U, and Ctrl-L. The status queue is present, but keyboard
 LED feedback is not implemented. PL011 serial input remains available through
 `-serial stdio`. The terminal runs built-in kernel commands only.
 
+EL0 diagnostic output uses only `NtWriteFile(-1, text, length)`, where `-1` is a
+fixed console-output pseudo-handle rather than a closable file-table entry.
+The syscall validates a bounded user range and supported ASCII text before a
+shared console path writes to both UART and framebuffer. `NtReadFile` remains
+unimplemented, so the System thread alone currently consumes terminal input.
+
 ## Processes, Threads, And Lifetime
 
 `Ps` creates the initial pair of independently mapped EL0 `init.elf` processes
@@ -150,6 +156,9 @@ register frame and the dispatcher writes the result back to saved `x0`.
 
 User pointers are never trusted directly. User-memory copy-in and copy-out
 validate the complete required range and access mode before the kernel copies.
+Console writes additionally reject non-console handles, unsupported bytes,
+and lengths outside 1–1,024 bytes before producing output.
+
 The same ownership model supports process-local, zeroed virtual-memory regions,
 guarded stacks, W^X ELF mapping, and instruction-cache synchronization after
 mapping executable pages. Detailed current syscall limits are in

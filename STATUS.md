@@ -2,12 +2,12 @@
 
 **Project:** CantayaOS by CantayaTech
 **Target:** AArch64, UEFI, QEMU `virt` with OVMF
-**Last verified:** 2026-09-27
+**Last verified:** 2026-09-28
 
 ## Current Milestone
 
-**Objective:** Carry the verified QEMU runtime contract into CI, then establish
-a bounded EL0 console interface before moving command parsing out of EL1.
+**Objective:** Establish bounded EL0 console I/O before moving command parsing
+out of EL1. Console output is verified; exclusive input ownership is next.
 
 ## Verified Baseline For Planning
 
@@ -55,6 +55,11 @@ a bounded EL0 console interface before moving command parsing out of EL1.
 - Current EL0 coverage includes validated user-memory copy-in/copy-out, virtual
   allocation and free, thread create/wait/close/terminate, process
   create/wait/close/terminate, and system-information query.
+- `NtWriteFile` accepts only the fixed `-1` console-output pseudo-handle and
+  1–1,024 validated EL0 bytes. It rejects invalid handles, lengths, mappings,
+  and unsupported bytes before output; accepted ASCII text reaches UART and
+  framebuffer. Both init processes verify rejection and successful output in
+  QEMU smoke. The pseudo-handle cannot be closed.
 - `NtTerminateThread` accepts only a parent-owned typed thread handle. It
   rejects the current thread, removes a non-current queued target safely,
   signals its handle completion with the requested status, and treats an
@@ -165,9 +170,10 @@ lives in [docs/architecture.md](docs/architecture.md).
 
 ## Latest Verified Milestone
 
-The headless QEMU smoke test now checks the 128-byte terminal input boundary,
-eight rejected characters and bells, and successful next-command recovery. It
-retains the keyboard, serial, and two-round lifecycle checks.
+Both init processes now verify the bounded `NtWriteFile(-1)` console-output
+contract: invalid handle, close, length, bytes, and mapping fail without
+output; valid text succeeds. The QEMU smoke test requires two markers and
+retains terminal input and two-round lifecycle checks.
 
 ## Latest Planning Decision
 
@@ -178,16 +184,19 @@ copy-out rollback branches remain source-reviewed. Entry and stack rejection,
 ordinary typed-wait preflight, and cross-page wait arguments have EL0 evidence.
 Terminal commands, editing, PL011 CRLF suppression, unknown-command recovery,
 and the fixed input-line capacity are checked through smoke input. GitHub
-Actions now builds the project and passes the same headless QEMU smoke test on
+Actions builds the project and runs the same headless QEMU smoke test on
 Ubuntu with AArch64 UEFI firmware. The tested nightly is pinned to avoid a
-newer toolchain's UEFI linker regression.
+newer toolchain's UEFI linker regression. Console output is a fixed
+pseudo-handle operation, not a generic file-write service; input remains
+unimplemented while the kernel shell owns both input devices.
 
 ## Recommended Next Milestone
 
-Design a bounded EL0 console endpoint with explicit handle semantics and
-validated user buffers. Begin with output, then add input without letting the
-kernel shell consume the same bytes. Keep the fixed image selectors and all
-existing lifecycle checks.
+Establish exclusive ownership of PL011 and keyboard input before exposing a
+bounded EL0 read. The kernel shell must stop consuming bytes while an EL0
+console reader owns them; validate the full user output range and keep reads
+nonblocking or explicitly cancellable. Retain the fixed image selectors and
+all existing terminal and lifecycle checks.
 
 ### Follow-On Candidates
 

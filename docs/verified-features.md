@@ -239,8 +239,13 @@ next, read [STATUS.md](../STATUS.md).
 
 ## Syscall And User-Memory Guarantees
 
-- `NtWriteFile` copies from EL0 mappings only after validating the mapped user
-  range; it does not dereference an untrusted user virtual pointer directly.
+- `NtWriteFile` accepts only the fixed, non-closable `-1` console-output
+  pseudo-handle. It copies 1–1,024 bytes only after validating the full mapped
+  EL0 range, accepts printable ASCII plus BEL, Backspace, CR, and LF, then
+  mirrors the text to UART and framebuffer. It rejects invalid handles,
+  lengths, mappings, and unsupported bytes before producing any output.
+  Both init processes check these failures and a valid write in QEMU smoke;
+  the framebuffer mirror is source-reviewed, not pixel-compared by smoke.
 - `NtAllocateVirtual` and `NtQuerySystemInfo` copy their outputs only to fully
   validated writable EL0 mappings. `NtAllocateVirtual` owns mappings in the
   calling process instead of exposing a kernel virtual address.
@@ -331,6 +336,11 @@ Cross-page wait preflight adds two
 `[user-init] cross-page typed wait preflight validated` markers; `make smoke`
 passed with these, the previous lifecycle checks, and the keyboard and
 terminal startup markers.
+Console-output preflight adds two
+`[user-init] EL0 console output contract validated` markers. Each init
+process checks invalid-handle, close, zero and excessive lengths, unsupported
+bytes, an unmapped pointer, and a valid write. `make smoke` passed with all
+previous terminal and lifecycle assertions.
 
 The terminal and keyboard change also passed `make smoke`; the smoke test now
 injects `help` and an edited `echo` command through the keyboard and requires
