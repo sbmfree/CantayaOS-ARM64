@@ -899,21 +899,36 @@ fn system_thread_main() {
     }
     // Let the scheduler reap the final EL0 thread before showing the prompt.
     yield_now();
-    let mut shell = crate::shell::Shell::start();
     if CONSOLE_INPUT_PROBE.load(core::sync::atomic::Ordering::Relaxed) {
-        // Only the private smoke disk requests this controlled init copy.
-        // It exercises the handoff while the prompt is live and waits for
-        // injected bytes, so must never run during an ordinary boot.
+        // Preserve the EL1-shell exclusion regression on the private smoke
+        // disk before handing the terminal to the EL0 command loop.
+        let mut fallback = crate::shell::Shell::start();
         let (probe_process, probe_thread) =
             super::create_process_from_source(super::INITIAL_IMAGE_SOURCE, 0x79)
                 .expect("failed to start fixed console-input probe");
         enqueue(probe_thread);
+        while probe_process.exit_status().is_none() {
+            fallback.poll();
+            yield_now();
+        }
         drop(probe_process);
     }
 
+    crate::hal::framebuffer::show_shell_screen();
+    match super::create_process_from_source(super::INITIAL_IMAGE_SOURCE, 0x7b) {
+        Ok((shell_process, shell_thread)) => {
+            enqueue(shell_thread);
+            while shell_process.exit_status().is_none() {
+                yield_now();
+            }
+            log::warn!("Ps: EL0 shell exited; restoring EL1 fallback prompt");
+        }
+        Err(error) => log::warn!("Ps: EL0 shell could not start ({error:?}); restoring EL1 prompt"),
+    }
+
+    let mut fallback = crate::shell::Shell::start();
     loop {
-        shell.poll();
-        // Keep the serial console responsive without monopolising the CPU.
+        fallback.poll();
         yield_now();
     }
 }

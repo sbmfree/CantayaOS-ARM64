@@ -19,6 +19,7 @@ CONSOLE_INPUT_READY = "[user-init] EL0 console input ready"
 CONSOLE_INPUT_ISOLATED = "[user-init] EL0 console input isolation validated"
 CONSOLE_KEYBOARD_READY = "[user-init] EL0 console keyboard ready"
 CONSOLE_INPUT_VALIDATED = "[user-init] EL0 console input validated"
+USER_SHELL_READY = "[user-shell] EL0 command loop ready"
 KEYBOARD_HELP_RESPONSE = "help          Show commands"
 KEYBOARD_EDIT_RESPONSE = "\nedited\ncantaya> "
 SERIAL_ECHO_RESPONSE = "\nserialprobe\ncantaya> "
@@ -46,6 +47,8 @@ OVERFLOW_RESPONSE = (
     + "\ncantaya> "
 )
 OVERFLOW_FOLLOWUP_RESPONSE = "\nboundok\ncantaya> "
+QUESTION_HELP_RESPONSE = "?\nhelp          Show commands"
+BARE_ECHO_RESPONSE = "echo\n\ncantaya> "
 SERIAL_STEPS = (
     (CONSOLE_INPUT_READY, b"@"),
     (KEYBOARD_EDIT_RESPONSE, b"echo serialprobe\r"),
@@ -57,10 +60,12 @@ SERIAL_STEPS = (
     (UNKNOWN_RESPONSE, b"echo recovered\r"),
     (RECOVERY_RESPONSE, OVERFLOW_INPUT),
     (OVERFLOW_RESPONSE, b"echo boundok\r"),
+    (OVERFLOW_FOLLOWUP_RESPONSE, b"?\r"),
+    (QUESTION_HELP_RESPONSE, b"echo\r"),
 )
 KEYBOARD_STEPS = (
     (CONSOLE_KEYBOARD_READY, ("k",)),
-    (CONSOLE_INPUT_VALIDATED, ("h", "e", "l", "p", "ret")),
+    (USER_SHELL_READY, ("h", "e", "l", "p", "ret")),
     (
         KEYBOARD_HELP_RESPONSE,
         (
@@ -123,6 +128,7 @@ REQUIRED_MARKERS = (
     CONSOLE_INPUT_ISOLATED,
     CONSOLE_KEYBOARD_READY,
     CONSOLE_INPUT_VALIDATED,
+    USER_SHELL_READY,
     KEYBOARD_HELP_RESPONSE,
     KEYBOARD_EDIT_RESPONSE,
     SERIAL_ECHO_RESPONSE,
@@ -137,6 +143,8 @@ REQUIRED_MARKERS = (
     RECOVERY_RESPONSE,
     OVERFLOW_RESPONSE,
     OVERFLOW_FOLLOWUP_RESPONSE,
+    QUESTION_HELP_RESPONSE,
+    BARE_ECHO_RESPONSE,
 )
 REQUIRED_PATTERNS = (
     ("uptime command response", UPTIME_RESPONSE),
@@ -191,6 +199,8 @@ FAILURE_MARKERS = (
     "EL1 data abort",
     "[user-init] ERROR failed creation started target",
     "[user-init] ERROR console input probe failed",
+    "Ps: EL0 shell exited",
+    "Ps: EL0 shell could not start",
     "[System] heartbeat",
     "[Thread-A] alive",
     "[Thread-B] alive",
@@ -263,11 +273,11 @@ def main() -> int:
     args = parser.parse_args()
 
     required_markers = (
-        (TERMINAL_PROMPT, KEYBOARD_HELP_RESPONSE, NORMAL_BOOT_SERIAL_RESPONSE)
+        (USER_SHELL_READY, TERMINAL_PROMPT, KEYBOARD_HELP_RESPONSE, NORMAL_BOOT_SERIAL_RESPONSE)
         if args.normal_boot else REQUIRED_MARKERS
     )
     keyboard_steps = (
-        ((TERMINAL_PROMPT, ("h", "e", "l", "p", "ret")),)
+        ((USER_SHELL_READY, ("h", "e", "l", "p", "ret")),)
         if args.normal_boot else KEYBOARD_STEPS
     )
     serial_steps = (
