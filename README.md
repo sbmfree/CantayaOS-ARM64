@@ -5,12 +5,12 @@ learn and demonstrate how computers run software. It explores low-level
 concepts such as kernels, processes, memory management, hardware interaction,
 and system calls through a working system in QEMU.
 
+![CantayaOS graphical terminal running in QEMU](docs/cantayaos-screenshot.png)
+
 CantayaOS is a Rust operating system for AArch64 (ARMv8-A) systems with UEFI
 boot and an NT-like kernel architecture. Its custom PE32+ loader uses
 `uefi-rs`, and its supported development platform is QEMU `aarch64` `virt`
 with OVMF.
-
-![CantayaOS graphical terminal running in QEMU](docs/cantayaos-screenshot.png)
 
 For the active roadmap, constraints, and required validation, start with
 [STATUS.md](STATUS.md). The complete documentation map is in
