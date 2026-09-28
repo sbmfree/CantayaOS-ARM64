@@ -253,6 +253,11 @@ next, read [STATUS.md](../STATUS.md).
   `STATUS_ACCESS_DENIED`. A successful call copies immediately available
   PL011 or VirtIO-keyboard bytes and the count. `NtClose(-2)` releases only the
   owner's claim; a completed owner is reclaimed by the next shell read.
+- The controlled EL0 shell uses fixed class 0 (free pages) and class 1
+  (elapsed 100 Hz ticks) of `NtQuerySystemInfo` for `mem` and `uptime`.
+  `NtClearConsole` redraws UART and framebuffer only for the live input owner;
+  a competing process receives `STATUS_ACCESS_DENIED`. Raw escape bytes remain
+  disallowed in `NtWriteFile`.
 - `NtAllocateVirtual` and `NtQuerySystemInfo` copy their outputs only to fully
   validated writable EL0 mappings. `NtAllocateVirtual` owns mappings in the
   calling process instead of exposing a kernel virtual address.
@@ -352,12 +357,20 @@ Console-input preflight uses a controlled extra init copy on a private
 smoke-flagged disk. It checks invalid handle and close, zero and excessive
 capacity, unmapped and cross-page output ranges, untouched outputs on an empty
 read, denial of a competing process, PL011 `@` and keyboard `k` reception,
-close and double-close, then exits holding a fresh claim. The shell processes
-the subsequent keyboard `help` only after that owner completes. `make smoke`
-also boots the unmodified disk separately and verifies that the ordinary
-terminal accepts keyboard `help` and serial `echo normalboot` without running
-the probe. Both boots passed locally with the prior lifecycle and terminal
-assertions retained.
+close and double-close, then exits holding a fresh claim. The competing process
+also verifies that it cannot clear the terminal. The System thread then starts
+the EL0 command loop; smoke waits for its readiness marker before injecting
+keyboard `help`. `make smoke` also boots the unmodified disk separately and
+verifies that the ordinary EL0 terminal accepts keyboard `help` and serial
+`echo normalboot` without running the probe. Both boots passed locally with
+the prior lifecycle and terminal assertions retained.
+
+The EL0 command loop preserves the 128-byte line limit, editing controls,
+CRLF suppression, and the existing `help`, `info`, `uptime`, `mem`, `echo`, and
+`clear` responses. Smoke runs the full serial/keyboard command sequence after
+the EL0 readiness marker and rejects an unexpected EL1 fallback. It also
+checks the `?` alias and a bare `echo` response. The fallback path itself is
+source-reviewed, not yet exercised by a dedicated QEMU fault-injection case.
 
 The terminal and keyboard change also passed `make smoke`; the smoke test now
 injects `help` and an edited `echo` command through the keyboard and requires

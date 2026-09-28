@@ -6,8 +6,8 @@
 
 ## Current Milestone
 
-**Objective:** Establish bounded EL0 console I/O before moving command parsing
-out of EL1. Output and exclusive, nonblocking input are now smoke-verified.
+**Objective:** Run the interactive command loop in a controlled EL0 process
+over the bounded console I/O contracts, retaining an EL1 fallback prompt.
 
 ## Verified Baseline For Planning
 
@@ -20,10 +20,13 @@ out of EL1. Output and exclusive, nonblocking input are now smoke-verified.
   process/thread handles retain completion state safely across deferred thread
   reaping.
 - The two boot-loaded `init.elf` processes remain a context-switch validation
-  workload. After both exit, the System thread clears the framebuffer boot log
-  and starts a CantayaOS banner and lower terminal pane. The terminal accepts
-  built-in commands from either PL011 serial or QEMU's VirtIO-MMIO keyboard;
-  the periodic heartbeat and Thread-A/B demonstration loops are disabled.
+  workload. After both exit, the System thread redraws the framebuffer and
+  starts a controlled `init.elf` copy in EL0 shell mode. That process owns
+  console input, parses the existing built-in commands, and writes the terminal
+  through `NtWriteFile(-1)`; the EL1 prompt is retained only as a fallback if
+  the process exits or cannot start. The terminal accepts PL011 serial and
+  QEMU VirtIO-MMIO keyboard input. The periodic heartbeat and Thread-A/B
+  demonstration loops are disabled.
   QEMU uses 1024x768 GOP mode when available. Keyboard decoding currently
   covers US ASCII, Shift, Caps Lock, Backspace, Enter, Ctrl-U, and Ctrl-L.
 - `make smoke` now uses a private QMP monitor socket to send `help` through the
@@ -66,6 +69,11 @@ out of EL1. Output and exclusive, nonblocking input are now smoke-verified.
   changing either output when no byte is ready, and excludes other EL0
   processes and the kernel shell while the owner is live. `NtClose(-2)` releases
   only the caller's claim; process exit lets the shell reclaim it.
+- EL0 `help`/`?`, `info`, `uptime`, `mem`, `echo`, and `clear` preserve the
+  earlier terminal responses and editing behavior. A fixed system-information
+  class exposes elapsed 100 Hz ticks; an input-owner-only clear service redraws
+  UART and framebuffer without admitting raw escape sequences through
+  `NtWriteFile`.
 - `NtTerminateThread` accepts only a parent-owned typed thread handle. It
   rejects the current thread, removes a non-current queued target safely,
   signals its handle completion with the requested status, and treats an
@@ -176,14 +184,12 @@ lives in [docs/architecture.md](docs/architecture.md).
 
 ## Latest Verified Milestone
 
-A smoke-only, controlled copy of `init.elf` now verifies exclusive
-`NtReadFile(-2)` ownership while the kernel prompt is live. It checks handle,
-length, unmapped and cross-page preflight, unchanged outputs on an empty
-read, denial of a competing process, PL011 and keyboard bytes, explicit close,
-double-close, and shell reclaim after owner exit. `make smoke` also boots the
-unmodified disk and checks that the ordinary terminal accepts keyboard and
-serial commands without starting the probe. The earlier output, lifecycle,
-and terminal checks remain required.
+The interactive command loop now runs in a controlled EL0 `init.elf` mode on
+normal boots. The private smoke boot first retains the EL1 prompt for the
+input-ownership probe, then hands off to that same EL0 loop. QEMU smoke checks
+the existing editing, commands, serial, keyboard, line-bound, and lifecycle
+contracts against the EL0 loop, plus `?` and bare `echo`. A separate normal
+boot confirms the EL0 loop starts without the smoke probe.
 
 ## Latest Planning Decision
 
@@ -197,16 +203,17 @@ and the fixed input-line capacity are checked through smoke input. GitHub
 Actions builds the project and runs the same headless QEMU smoke test on
 Ubuntu with AArch64 UEFI firmware. The tested nightly is pinned to avoid a
 newer toolchain's UEFI linker regression. Console output and input are fixed
-pseudo-handle operations, not generic file I/O. The shell's built-in command
-parser still runs in EL1.
+pseudo-handle operations, not generic file I/O. The EL1 parser remains a
+fallback; smoke rejects unexpected fallback during the EL0 command checks.
 
 ## Recommended Next Milestone
 
-Move the interactive command loop into a controlled EL0 process using the
-bounded `NtReadFile(-2)` and `NtWriteFile(-1)` contracts. Preserve keyboard and
-PL011 editing behavior and all existing built-in command responses; keep the
-EL1 prompt available as a fallback until QEMU smoke proves parity. Do not
-expand executable image selectors or expose generic device/file handles.
+Replace the EL0 shell's repeated empty-read polling with a waitable,
+cancellable console-input readiness path. The kernel must wake only the live
+owner when PL011 or keyboard input arrives, and shell exit or termination must
+cancel its wait without leaving a stale waiter. Keep `NtReadFile(-2)` bounded,
+preserve the EL1 fallback, and retain all existing terminal and lifecycle
+regressions. Do not expand image selectors or generic device/file handles.
 
 ### Follow-On Candidates
 

@@ -76,17 +76,21 @@ fixed driver/device path.
 The two initial EL0 `init.elf` processes run the boot validation workload.
 The System kernel thread waits for both processes to exit, then clears the
 framebuffer boot log and draws a CantayaOS banner with the kernel version.
-Terminal text occupies a scrolling pane below the banner. The prompt accepts
-bounded ASCII lines and runs `help`, `info`, `uptime`, `mem`, `echo`, and `clear`
-inside the kernel. Terminal output goes to both the framebuffer and PL011 UART.
+It starts a controlled copy of the retained `init.elf` in EL0 shell mode;
+if that process cannot start or exits, the System thread restores its EL1
+fallback prompt. Terminal text occupies a scrolling pane below the banner.
+The EL0 prompt accepts bounded ASCII lines and runs `help`, `info`, `uptime`,
+`mem`, `echo`, and `clear`. Terminal output goes to both the framebuffer and
+PL011 UART.
 The recurring System heartbeat and Thread-A/B demonstration loops are disabled.
 
 QEMU attaches a modern VirtIO-MMIO keyboard. The driver scans the MMIO slots,
 negotiates VirtIO 1, checks the advertised key bitmap, and polls its event
-queue from the System thread. It decodes US ASCII keys plus Shift, Caps Lock,
+queue for the current console owner. It decodes US ASCII keys plus Shift, Caps Lock,
 Backspace, Enter, Ctrl-U, and Ctrl-L. The status queue is present, but keyboard
 LED feedback is not implemented. PL011 serial input remains available through
-`-serial stdio`. The terminal runs built-in kernel commands only.
+`-serial stdio`. The terminal runs only its built-in commands, not arbitrary
+programs or file paths.
 
 EL0 diagnostic output uses only `NtWriteFile(-1, text, length)`, where `-1` is a
 fixed console-output pseudo-handle rather than a closable file-table entry.
@@ -98,8 +102,12 @@ It validates both writable EL0 ranges before claiming PL011 and keyboard input
 for one process; an empty read returns `STATUS_TIMEOUT` without writing output.
 Other processes are denied until the owner calls `NtClose(-2)` or exits. The
 System shell does not poll input while a live EL0 owner holds that claim.
-Normal boots leave the shell in control; only the private smoke ESP requests a
-controlled input probe through a `BootInfo` flag.
+Normal boots give the EL0 shell input ownership; only the private smoke ESP
+requests a controlled input probe through a `BootInfo` flag before starting
+that shell. The EL0 `clear` command uses a narrow owner-only redraw syscall
+rather than broadening `NtWriteFile` to accept escape sequences. System-info
+classes 0 and 1 provide free pages and elapsed 100 Hz ticks for `mem` and
+`uptime`.
 
 ## Processes, Threads, And Lifetime
 

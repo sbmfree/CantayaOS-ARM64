@@ -25,7 +25,8 @@ For the active roadmap, constraints, and required validation, start with
 - Timer-based preemptive scheduling and process and thread management.
 - System calls and typed handles for process and thread objects.
 - VirtIO block device access and FAT-backed loading of the fixed `CHILD.ELF` image.
-- Built-in terminal input through serial and VirtIO keyboard, with framebuffer output.
+- EL0 terminal with built-in commands, serial and VirtIO keyboard input, and
+  framebuffer output; an EL1 prompt remains as a fallback.
 - Automated QEMU smoke testing locally and in GitHub Actions.
 
 ## Architecture At A Glance
@@ -96,8 +97,9 @@ make smoke
 make clean
 ```
 
-After both boot validation programs finish, the QEMU window clears the boot
-logs and shows a CantayaOS banner, version, and terminal pane at the bottom.
+After both boot validation programs finish, a controlled EL0 shell starts and
+the QEMU window clears the boot logs and shows a CantayaOS banner, version,
+and terminal pane at the bottom.
 The bootloader selects a 1024x768 display mode when the firmware offers it.
 Click the QEMU window to type into the terminal using its VirtIO keyboard;
 the serial console in the shell that launched `make run` (`-serial stdio`)
@@ -105,7 +107,8 @@ also accepts input. Commands and their output appear in both places. Type
 `help` for the built-in commands: `help`, `info`, `uptime`, `mem`,
 `echo <text>`, and `clear`. Backspace edits the line; Ctrl-U clears it, and Ctrl-L
 redraws the terminal screen. The current keyboard map covers US ASCII keys,
-Shift, Caps Lock, and these editing keys; input is polled by the kernel shell.
+Shift, Caps Lock, and these editing keys; the EL0 shell polls its exclusive
+console-input handle.
 The prompt accepts built-in commands, not arbitrary programs or file paths.
 
 `make smoke` is the current regression check. Its scope and expected runtime
