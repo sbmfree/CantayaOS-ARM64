@@ -1,6 +1,6 @@
 # CantayaOS
 
-CantayaOS is a hobby operating system I am building from scratch in Rust to
+CantayaOS is a independent operating system project I am building from scratch in Rust to
 learn and demonstrate how computers run software. It explores low-level
 concepts such as kernels, processes, memory management, hardware interaction,
 and system calls through a working system in QEMU.
