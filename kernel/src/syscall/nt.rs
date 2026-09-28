@@ -31,6 +31,7 @@ pub enum NtSyscallNumber {
     NtClose = 0x000F,
     NtReadFile = 0x0006,
     NtWriteFile = 0x0008,
+    NtClearConsole = 0x0037,
     NtAllocateVirtual = 0x0015,
     NtFreeVirtual = 0x001B,
     NtQuerySystemInfo = 0x0036,
@@ -49,6 +50,7 @@ impl NtSyscallNumber {
             0x000F => Self::NtClose,
             0x0006 => Self::NtReadFile,
             0x0008 => Self::NtWriteFile,
+            0x0037 => Self::NtClearConsole,
             0x0015 => Self::NtAllocateVirtual,
             0x001B => Self::NtFreeVirtual,
             0x0036 => Self::NtQuerySystemInfo,
@@ -102,14 +104,30 @@ pub fn sys_write_file(regs: &mut SavedRegs) -> u64 {
                 return STATUS_INVALID_PARAMETER;
             };
             crate::console::write(format_args!("{text}"));
-            log::info!(
-                "NtWriteFile copied {} byte(s) from validated EL0 memory to console",
-                len
-            );
+            // Interactive writes must not inject a diagnostic log between
+            // echoed command bytes and their response. Retain boot-workload
+            // copy evidence for callers that do not own terminal input.
+            if !crate::console::owns_input(&process) {
+                log::info!(
+                    "NtWriteFile copied {} byte(s) from validated EL0 memory to console",
+                    len
+                );
+            }
             0
         }
         Some(Err(_)) | None => STATUS_ACCESS_VIOLATION,
     }
+}
+
+pub fn sys_clear_console(_regs: &mut SavedRegs) -> u64 {
+    let Some(process) = crate::executive::ps::scheduler::current_process() else {
+        return STATUS_ACCESS_DENIED;
+    };
+    if !crate::console::owns_input(&process) {
+        return STATUS_ACCESS_DENIED;
+    }
+    crate::console::clear();
+    0
 }
 
 pub fn sys_read_file(regs: &mut SavedRegs) -> u64 {
@@ -439,16 +457,21 @@ pub fn sys_wait_for_single_object(regs: &mut SavedRegs) -> u64 {
 pub fn sys_query_system_info(regs: &mut SavedRegs) -> u64 {
     let class = regs.x[0];
     match class {
-        0 => {
-            // SystemBasicInformation — return free page count as stub
+        0 | 1 => {
+            // Fixed classes: free pages (0), elapsed 100 Hz scheduler ticks (1).
             if regs.x[1] == 0 {
                 return STATUS_INVALID_PARAMETER;
             }
             let Some(process) = crate::executive::ps::scheduler::current_process() else {
                 return STATUS_ACCESS_VIOLATION;
             };
-            let free_pages = crate::executive::mm::phys::free_pages() as u64;
-            let output = free_pages.to_le_bytes();
+            let value = if class == 0 {
+                crate::executive::mm::phys::free_pages() as u64
+            } else {
+                crate::executive::ps::scheduler::TICK_COUNT
+                    .load(core::sync::atomic::Ordering::Relaxed)
+            };
+            let output = value.to_le_bytes();
             match process.with_user_address_space(|address_space| {
                 address_space.copy_to_user(regs.x[1], &output)
             }) {

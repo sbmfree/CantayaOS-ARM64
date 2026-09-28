@@ -27,6 +27,9 @@ _start:
     mov x9, #0x7a
     cmp x1, x9
     b.eq console_input_conflict_entry
+    mov x9, #0x7b
+    cmp x1, x9
+    b.eq el0_shell_main
     // Initial processes start with x1=0. Any other controlled value here is
     // an opaque parent-owned handle to probe from this empty child table.
     cbnz x1, handle_isolation_probe_entry
@@ -2950,6 +2953,12 @@ console_input_conflict_entry:
     mov x8, #0xf
     svc #0
     cmp x0, x20
+    b.ne console_input_probe_failed
+    // Redrawing the shared terminal is reserved for its input owner.
+    mov x0, xzr
+    mov x8, #0x37
+    svc #0
+    cmp x0, x19
     b.ne console_input_probe_failed
 
     movn x0, #0

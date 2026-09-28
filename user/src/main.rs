@@ -3,6 +3,8 @@
 
 use core::arch::global_asm;
 
+mod shell;
+
 global_asm!(include_str!("start.s"));
 
 #[panic_handler]

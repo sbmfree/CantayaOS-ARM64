@@ -72,6 +72,21 @@ pub fn release_input(process: &Arc<EProcess>) -> bool {
     })
 }
 
+/// Only the current live input owner may redraw the terminal from EL0.
+pub fn owns_input(process: &Arc<EProcess>) -> bool {
+    with_input_owner(|owner| {
+        owner
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .is_some_and(|active| active.exit_status().is_none() && Arc::ptr_eq(&active, process))
+    })
+}
+
+pub fn clear() {
+    crate::hal::uart::write_console(format_args!("\x1b[2J\x1b[H"));
+    crate::hal::framebuffer::show_shell_screen();
+}
+
 /// The kernel prompt may poll only when no live EL0 process owns input.
 pub fn try_read_for_shell() -> Option<u8> {
     with_input_owner(|owner| {

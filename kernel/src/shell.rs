@@ -1,4 +1,4 @@
-//! Minimal command prompt accepting QEMU VirtIO keyboard and PL011 serial input.
+//! EL1 fallback prompt if the controlled EL0 shell exits or cannot start.
 
 use core::sync::atomic::Ordering;
 
@@ -135,6 +135,5 @@ fn output(args: core::fmt::Arguments<'_>) {
 }
 
 fn clear_output() {
-    crate::hal::uart::write_console(format_args!("\x1b[2J\x1b[H"));
-    crate::hal::framebuffer::show_shell_screen();
+    crate::console::clear();
 }
