@@ -11,7 +11,7 @@ pub mod scheduler;
 pub mod thread;
 
 use alloc::sync::Arc;
-use cantaya_shared::BootInfo;
+use cantaya_shared::{BootInfo, BOOT_FLAG_CONSOLE_INPUT_PROBE};
 use process::EProcess;
 use spin::Mutex;
 use thread::EThread;
@@ -23,7 +23,7 @@ static INITIAL_PROCESSES: Mutex<Option<[Arc<EProcess>; 2]>> = Mutex::new(None);
 
 /// One-time initialisation: create the idle process + System process.
 pub fn init(boot_info: &BootInfo) {
-    scheduler::init();
+    scheduler::init(boot_info.flags & BOOT_FLAG_CONSOLE_INPUT_PROBE != 0);
     let [(first_process, first_thread), (second_process, second_thread)] =
         elf::load_initial_processes(boot_info)
             .expect("failed to load the initial user-mode ELF process");

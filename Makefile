@@ -119,6 +119,13 @@ smoke: iso
 	    --ovmf-vars "$(OVMF_VARS)" \
 	    --image "$(DISK_IMG)" \
 	    --timeout "$(SMOKE_TIMEOUT)"
+	@python3 scripts/qemu_smoke.py \
+	    --qemu "$(QEMU)" \
+	    --ovmf "$(OVMF)" \
+	    --ovmf-vars "$(OVMF_VARS)" \
+	    --image "$(DISK_IMG)" \
+	    --timeout "$(SMOKE_TIMEOUT)" \
+	    --normal-boot
 
 # ─────────────────────────────────────────────────────────────────────────────
 clean:

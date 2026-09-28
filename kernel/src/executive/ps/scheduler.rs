@@ -62,11 +62,15 @@ static mut IDLE_CONTEXT: super::thread::ThreadContext = super::thread::ThreadCon
 /// Global tick counter (incremented every 100 Hz timer tick).
 pub static TICK_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
+static CONSOLE_INPUT_PROBE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
 /// Finite waits use relative 100 Hz scheduler ticks and are capped at 10 seconds.
 pub const MAX_FINITE_WAIT_TICKS: u64 = 1_000;
 
 /// Initialise the scheduler and create the System kernel thread.
-pub fn init() {
+pub fn init(console_input_probe: bool) {
+    CONSOLE_INPUT_PROBE.store(console_input_probe, core::sync::atomic::Ordering::Relaxed);
     let system_proc = EProcess::new_kernel_process();
     let system_thread = EThread::new_kernel(system_proc, system_thread_main, 4);
     RUN_QUEUE.lock().push_back(tp(system_thread));
@@ -896,6 +900,16 @@ fn system_thread_main() {
     // Let the scheduler reap the final EL0 thread before showing the prompt.
     yield_now();
     let mut shell = crate::shell::Shell::start();
+    if CONSOLE_INPUT_PROBE.load(core::sync::atomic::Ordering::Relaxed) {
+        // Only the private smoke disk requests this controlled init copy.
+        // It exercises the handoff while the prompt is live and waits for
+        // injected bytes, so must never run during an ordinary boot.
+        let (probe_process, probe_thread) =
+            super::create_process_from_source(super::INITIAL_IMAGE_SOURCE, 0x79)
+                .expect("failed to start fixed console-input probe");
+        enqueue(probe_thread);
+        drop(probe_process);
+    }
 
     loop {
         shell.poll();

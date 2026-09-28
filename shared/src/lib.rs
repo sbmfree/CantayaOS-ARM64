@@ -118,6 +118,8 @@ impl MemoryMap {
 
 /// Magic value written by the bootloader and verified by the kernel.
 pub const BOOT_INFO_MAGIC: u64 = 0xC4_A7_4A_05_00_00_00_01;
+/// Run the interactive EL0 console-input contract probe (smoke boot only).
+pub const BOOT_FLAG_CONSOLE_INPUT_PROBE: u32 = 1;
 
 /// Top-level structure passed from the bootloader to the kernel via `x0`.
 ///
@@ -128,7 +130,7 @@ pub const BOOT_INFO_MAGIC: u64 = 0xC4_A7_4A_05_00_00_00_01;
 pub struct BootInfo {
     pub magic: u64,
     pub version: u32,
-    pub _reserved: u32,
+    pub flags: u32,
     pub framebuffer: FramebufferInfo,
     pub memory_map: MemoryMap,
     /// Physical address of the ACPI 2.0 RSDP, or 0 if not found.

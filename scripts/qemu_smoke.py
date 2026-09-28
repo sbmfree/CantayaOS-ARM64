@@ -15,9 +15,14 @@ import time
 from pathlib import Path
 
 TERMINAL_PROMPT = "CantayaOS terminal. Type 'help' for commands."
+CONSOLE_INPUT_READY = "[user-init] EL0 console input ready"
+CONSOLE_INPUT_ISOLATED = "[user-init] EL0 console input isolation validated"
+CONSOLE_KEYBOARD_READY = "[user-init] EL0 console keyboard ready"
+CONSOLE_INPUT_VALIDATED = "[user-init] EL0 console input validated"
 KEYBOARD_HELP_RESPONSE = "help          Show commands"
 KEYBOARD_EDIT_RESPONSE = "\nedited\ncantaya> "
 SERIAL_ECHO_RESPONSE = "\nserialprobe\ncantaya> "
+NORMAL_BOOT_SERIAL_RESPONSE = "\nnormalboot\ncantaya> "
 KEYBOARD_MODIFIER_RESPONSE = "\nAbCd\ncantaya> "
 CTRL_L_REDRAW = "\x1b[2J\x1b[Hcantaya> echo saved"
 CTRL_L_RESPONSE = "\nsaved\ncantaya> "
@@ -42,6 +47,7 @@ OVERFLOW_RESPONSE = (
 )
 OVERFLOW_FOLLOWUP_RESPONSE = "\nboundok\ncantaya> "
 SERIAL_STEPS = (
+    (CONSOLE_INPUT_READY, b"@"),
     (KEYBOARD_EDIT_RESPONSE, b"echo serialprobe\r"),
     (CLEAR_FOLLOWUP_RESPONSE, b"info\r"),
     (INFO_RESPONSE, b"uptime\r"),
@@ -53,7 +59,8 @@ SERIAL_STEPS = (
     (OVERFLOW_RESPONSE, b"echo boundok\r"),
 )
 KEYBOARD_STEPS = (
-    (TERMINAL_PROMPT, ("h", "e", "l", "p", "ret")),
+    (CONSOLE_KEYBOARD_READY, ("k",)),
+    (CONSOLE_INPUT_VALIDATED, ("h", "e", "l", "p", "ret")),
     (
         KEYBOARD_HELP_RESPONSE,
         (
@@ -112,6 +119,10 @@ REQUIRED_MARKERS = (
     "Ps: typed process and thread handle waits validated",
     "Ps: process pid=",
     TERMINAL_PROMPT,
+    CONSOLE_INPUT_READY,
+    CONSOLE_INPUT_ISOLATED,
+    CONSOLE_KEYBOARD_READY,
+    CONSOLE_INPUT_VALIDATED,
     KEYBOARD_HELP_RESPONSE,
     KEYBOARD_EDIT_RESPONSE,
     SERIAL_ECHO_RESPONSE,
@@ -179,6 +190,7 @@ FAILURE_MARKERS = (
     "EL1 instruction abort",
     "EL1 data abort",
     "[user-init] ERROR failed creation started target",
+    "[user-init] ERROR console input probe failed",
     "[System] heartbeat",
     "[Thread-A] alive",
     "[Thread-B] alive",
@@ -247,7 +259,21 @@ def main() -> int:
     parser.add_argument("--ovmf-vars", type=Path, required=True)
     parser.add_argument("--image", type=Path, required=True)
     parser.add_argument("--timeout", type=float, default=35.0)
+    parser.add_argument("--normal-boot", action="store_true")
     args = parser.parse_args()
+
+    required_markers = (
+        (TERMINAL_PROMPT, KEYBOARD_HELP_RESPONSE, NORMAL_BOOT_SERIAL_RESPONSE)
+        if args.normal_boot else REQUIRED_MARKERS
+    )
+    keyboard_steps = (
+        ((TERMINAL_PROMPT, ("h", "e", "l", "p", "ret")),)
+        if args.normal_boot else KEYBOARD_STEPS
+    )
+    serial_steps = (
+        ((KEYBOARD_HELP_RESPONSE, b"echo normalboot\r"),)
+        if args.normal_boot else SERIAL_STEPS
+    )
 
     with tempfile.TemporaryDirectory(prefix="cantaya-smoke-") as directory:
         serial_log = Path(directory) / "serial.log"
@@ -258,6 +284,15 @@ def main() -> int:
         image_copy = Path(directory) / "cantaya.img"
         shutil.copyfile(args.ovmf_vars, vars_copy)
         shutil.copyfile(args.image, image_copy)
+        if not args.normal_boot:
+            smoke_flag = Path(directory) / "SMOKE.FLG"
+            smoke_flag.write_bytes(b"console-input-probe\n")
+            subprocess.run(
+                ["mcopy", "-i", str(image_copy), str(smoke_flag),
+                 "::/EFI/CantayaOS/SMOKE.FLG"],
+                check=True,
+                capture_output=True,
+            )
         command = [
             args.qemu,
             "-machine", "virt,highmem=on",
@@ -296,36 +331,37 @@ def main() -> int:
                         break
                     if output.count("Unknown command:") > 1:
                         break
-                    if keyboard_step < len(KEYBOARD_STEPS) and (
-                        KEYBOARD_STEPS[keyboard_step][0] in output
+                    if keyboard_step < len(keyboard_steps) and (
+                        keyboard_steps[keyboard_step][0] in output
                     ):
                         try:
                             send_keyboard_keys(
-                                monitor_path, KEYBOARD_STEPS[keyboard_step][1]
+                                monitor_path, keyboard_steps[keyboard_step][1]
                             )
                             keyboard_step += 1
                         except (OSError, ValueError, RuntimeError) as error:
                             input_error = str(error)
                             break
-                    if serial_step < len(SERIAL_STEPS) and response_seen(
-                        SERIAL_STEPS[serial_step][0], output
+                    if serial_step < len(serial_steps) and response_seen(
+                        serial_steps[serial_step][0], output
                     ):
                         try:
                             if process.stdin is None:
                                 raise RuntimeError("PL011 input pipe is unavailable")
                             send_serial_input(
-                                process.stdin, SERIAL_STEPS[serial_step][1]
+                                process.stdin, serial_steps[serial_step][1]
                             )
                             serial_step += 1
                         except (OSError, RuntimeError) as error:
                             input_error = str(error)
                             break
-                    if all(marker in output for marker in REQUIRED_MARKERS) and all(
-                        output.count(marker) >= count
-                        for marker, count in REQUIRED_MARKER_COUNTS.items()
-                    ) and all(pattern.search(output) for _, pattern in REQUIRED_PATTERNS) and (
-                        output.count("Unknown command:") == 1
-                    ):
+                    full_contract_passed = args.normal_boot or (
+                        all(output.count(marker) >= count
+                            for marker, count in REQUIRED_MARKER_COUNTS.items())
+                        and all(pattern.search(output) for _, pattern in REQUIRED_PATTERNS)
+                        and output.count("Unknown command:") == 1
+                    )
+                    if all(marker in output for marker in required_markers) and full_contract_passed:
                         break
                 if process.poll() is not None:
                     break
@@ -345,21 +381,25 @@ def main() -> int:
             output = serial_log.read_text(errors="replace")
 
     failures = [marker for marker in FAILURE_MARKERS if marker in output]
-    missing = [marker for marker in REQUIRED_MARKERS if marker not in output]
-    missing.extend(
-        f"{marker} (expected at least {count})"
-        for marker, count in REQUIRED_MARKER_COUNTS.items()
-        if output.count(marker) < count
-    )
-    missing.extend(
-        description
-        for description, pattern in REQUIRED_PATTERNS
-        if not pattern.search(output)
-    )
-    if output.count("Unknown command:") != 1:
-        missing.append("exactly one intentional unknown-command response")
-    if output.count("\x07") != len(OVERFLOW_TEXT):
-        missing.append(f"exactly {len(OVERFLOW_TEXT)} overflow bells")
+    missing = [marker for marker in required_markers if marker not in output]
+    if args.normal_boot:
+        if CONSOLE_INPUT_READY in output:
+            failures.append("console input probe started during normal boot")
+    else:
+        missing.extend(
+            f"{marker} (expected at least {count})"
+            for marker, count in REQUIRED_MARKER_COUNTS.items()
+            if output.count(marker) < count
+        )
+        missing.extend(
+            description
+            for description, pattern in REQUIRED_PATTERNS
+            if not pattern.search(output)
+        )
+        if output.count("Unknown command:") != 1:
+            missing.append("exactly one intentional unknown-command response")
+        if output.count("\x07") != len(OVERFLOW_TEXT):
+            missing.append(f"exactly {len(OVERFLOW_TEXT)} overflow bells")
     if failures or missing or input_error:
         print("CantayaOS QEMU smoke test failed.", file=sys.stderr)
         if input_error:
@@ -371,7 +411,8 @@ def main() -> int:
         print(output[-4000:], file=sys.stderr)
         return 1
 
-    print("CantayaOS QEMU smoke test passed.")
+    label = "normal boot" if args.normal_boot else "QEMU smoke test"
+    print(f"CantayaOS {label} passed.")
     return 0
 
 

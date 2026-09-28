@@ -21,6 +21,12 @@ _start:
     mov x9, #0x77
     cmp x1, x9
     b.eq unexpected_creation_entry
+    mov x9, #0x79
+    cmp x1, x9
+    b.eq console_input_probe_entry
+    mov x9, #0x7a
+    cmp x1, x9
+    b.eq console_input_conflict_entry
     // Initial processes start with x1=0. Any other controlled value here is
     // an opaque parent-owned handle to probe from this empty child table.
     cbnz x1, handle_isolation_probe_entry
@@ -2681,6 +2687,284 @@ unexpected_creation_entry:
     svc #0
     brk #0
 
+console_input_probe_entry:
+    mov x24, x0             // exclusive top of this guarded EL0 stack
+    sub sp, sp, #32
+    movz x19, #0x0008
+    movk x19, #0xc000, lsl #16   // STATUS_INVALID_HANDLE
+    movz x20, #0x000d
+    movk x20, #0xc000, lsl #16   // STATUS_INVALID_PARAMETER
+    movz x21, #0x0005
+    movk x21, #0xc000, lsl #16   // STATUS_ACCESS_VIOLATION
+    mov x22, #0x102           // STATUS_TIMEOUT
+
+    // Bad arguments must not claim input or touch either output.
+    movn x0, #0
+    add x1, sp, #16
+    mov x2, #1
+    add x3, sp, #8
+    mov x8, #0x6
+    svc #0
+    cmp x0, x19
+    b.ne console_input_probe_failed
+
+    movn x0, #1
+    mov x8, #0xf
+    svc #0
+    cmp x0, x19
+    b.ne console_input_probe_failed
+
+    movn x0, #1
+    add x1, sp, #16
+    mov x2, xzr
+    add x3, sp, #8
+    mov x8, #0x6
+    svc #0
+    cmp x0, x20
+    b.ne console_input_probe_failed
+
+    movn x0, #1
+    add x1, sp, #16
+    mov x2, #129
+    add x3, sp, #8
+    mov x8, #0x6
+    svc #0
+    cmp x0, x20
+    b.ne console_input_probe_failed
+
+    movn x0, #1
+    movz x1, #0x0900, lsl #16
+    mov x2, #1
+    add x3, sp, #8
+    mov x8, #0x6
+    svc #0
+    cmp x0, x21
+    b.ne console_input_probe_failed
+
+    movn x0, #1
+    add x1, sp, #16
+    mov x2, #1
+    movz x3, #0x0900, lsl #16
+    mov x8, #0x6
+    svc #0
+    cmp x0, x21
+    b.ne console_input_probe_failed
+
+    // Each output range must be valid all the way across its page boundary.
+    sub x25, x24, #1
+    mov w9, #0x5a
+    strb w9, [x25]
+    movn x0, #1
+    mov x1, x25
+    mov x2, #2
+    add x3, sp, #8
+    mov x8, #0x6
+    svc #0
+    cmp x0, x21
+    b.ne console_input_probe_failed
+    ldrb w9, [x25]
+    cmp w9, #0x5a
+    b.ne console_input_probe_failed
+
+    sub x25, x24, #4
+    mov w9, #0x5a5a
+    str w9, [x25]
+    movn x0, #1
+    add x1, sp, #16
+    mov x2, #1
+    mov x3, x25
+    mov x8, #0x6
+    svc #0
+    cmp x0, x21
+    b.ne console_input_probe_failed
+    ldr w9, [x25]
+    movz w10, #0x5a5a
+    cmp w9, w10
+    b.ne console_input_probe_failed
+
+    // A valid empty read acquires input and preserves the caller's outputs.
+    mov x9, #0x55
+    str x9, [sp, #8]
+    mov w9, #0x7e
+    strb w9, [sp, #16]
+    movn x0, #1
+    add x1, sp, #16
+    mov x2, #1
+    add x3, sp, #8
+    mov x8, #0x6
+    svc #0
+    cmp x0, x22
+    b.ne console_input_probe_failed
+    ldr x9, [sp, #8]
+    cmp x9, #0x55
+    b.ne console_input_probe_failed
+    ldrb w9, [sp, #16]
+    cmp w9, #0x7e
+    b.ne console_input_probe_failed
+
+    // A fresh process with an empty handle table cannot read or release the
+    // live owner's input pseudo-handle.
+    str xzr, [sp, #24]
+    add x0, sp, #24
+    mov x1, xzr
+    mov x2, #0x7a
+    mov x8, #0x4c
+    svc #0
+    cbnz x0, console_input_probe_failed
+    ldr x23, [sp, #24]
+    cbz x23, console_input_probe_failed
+    str wzr, [sp]
+    mov x0, x23
+    mov x1, xzr
+    mov x2, xzr
+    mov x3, sp
+    mov x8, #0x4
+    svc #0
+    cbnz x0, console_input_probe_failed
+    ldr w9, [sp]
+    cmp w9, #0x46
+    b.ne console_input_probe_failed
+    mov x0, x23
+    mov x8, #0xf
+    svc #0
+    cbnz x0, console_input_probe_failed
+
+    movn x0, #0
+    adr x1, console_input_ready_message
+    adr x2, console_input_ready_message_end
+    sub x2, x2, x1
+    mov x8, #0x8
+    svc #0
+    cbnz x0, console_input_probe_failed
+
+console_input_probe_poll:
+    movn x0, #1
+    add x1, sp, #16
+    mov x2, #1
+    add x3, sp, #8
+    mov x8, #0x6
+    svc #0
+    cbz x0, console_input_probe_received
+    cmp x0, x22
+    b.eq console_input_probe_poll
+    b console_input_probe_failed
+
+console_input_probe_received:
+    ldr x9, [sp, #8]
+    cmp x9, #1
+    b.ne console_input_probe_failed
+    ldrb w9, [sp, #16]
+    cmp w9, #0x40
+    b.ne console_input_probe_failed
+
+    movn x0, #0
+    adr x1, console_keyboard_ready_message
+    adr x2, console_keyboard_ready_message_end
+    sub x2, x2, x1
+    mov x8, #0x8
+    svc #0
+    cbnz x0, console_input_probe_failed
+
+console_keyboard_probe_poll:
+    movn x0, #1
+    add x1, sp, #16
+    mov x2, #1
+    add x3, sp, #8
+    mov x8, #0x6
+    svc #0
+    cbz x0, console_keyboard_probe_received
+    cmp x0, x22
+    b.eq console_keyboard_probe_poll
+    b console_input_probe_failed
+
+console_keyboard_probe_received:
+    ldr x9, [sp, #8]
+    cmp x9, #1
+    b.ne console_input_probe_failed
+    ldrb w9, [sp, #16]
+    cmp w9, #0x6b
+    b.ne console_input_probe_failed
+
+    movn x0, #1
+    mov x8, #0xf
+    svc #0
+    cbnz x0, console_input_probe_failed
+    movn x0, #1
+    mov x8, #0xf
+    svc #0
+    cmp x0, x19
+    b.ne console_input_probe_failed
+
+    // Claim once more, then exit without closing. The System shell must
+    // reclaim input from a completed owner before processing the next key.
+    mov x9, #0x55
+    str x9, [sp, #8]
+    movn x0, #1
+    add x1, sp, #16
+    mov x2, #1
+    add x3, sp, #8
+    mov x8, #0x6
+    svc #0
+    cmp x0, x22
+    b.ne console_input_probe_failed
+    ldr x9, [sp, #8]
+    cmp x9, #0x55
+    b.ne console_input_probe_failed
+
+    movn x0, #0
+    adr x1, console_input_validated_message
+    adr x2, console_input_validated_message_end
+    sub x2, x2, x1
+    mov x8, #0x8
+    svc #0
+    cbnz x0, console_input_probe_failed
+    movn x0, #0
+    mov x1, #0x45
+    mov x8, #0x29
+    svc #0
+
+console_input_probe_failed:
+    movn x0, #0
+    adr x1, console_input_failed_message
+    adr x2, console_input_failed_message_end
+    sub x2, x2, x1
+    mov x8, #0x8
+    svc #0
+    brk #0
+
+console_input_conflict_entry:
+    sub sp, sp, #16
+    movz x19, #0x0022
+    movk x19, #0xc000, lsl #16   // STATUS_ACCESS_DENIED
+    movz x20, #0x0008
+    movk x20, #0xc000, lsl #16   // STATUS_INVALID_HANDLE
+    movn x0, #1
+    mov x1, sp
+    mov x2, #1
+    add x3, sp, #8
+    mov x8, #0x6
+    svc #0
+    cmp x0, x19
+    b.ne console_input_probe_failed
+    movn x0, #1
+    mov x8, #0xf
+    svc #0
+    cmp x0, x20
+    b.ne console_input_probe_failed
+
+    movn x0, #0
+    adr x1, console_input_isolated_message
+    adr x2, console_input_isolated_message_end
+    sub x2, x2, x1
+    mov x8, #0x8
+    svc #0
+    cbnz x0, console_input_probe_failed
+    movn x0, #0
+    mov x1, #0x46
+    mov x8, #0x29
+    svc #0
+    b console_input_probe_failed
+
 worker_entry:
 1:
     nop
@@ -2901,6 +3185,21 @@ invalid_console_control:
 console_output_message:
     .ascii "[user-init] EL0 console output contract validated\n"
 console_output_message_end:
+console_input_ready_message:
+    .ascii "[user-init] EL0 console input ready\n"
+console_input_ready_message_end:
+console_input_isolated_message:
+    .ascii "[user-init] EL0 console input isolation validated\n"
+console_input_isolated_message_end:
+console_keyboard_ready_message:
+    .ascii "[user-init] EL0 console keyboard ready\n"
+console_keyboard_ready_message_end:
+console_input_validated_message:
+    .ascii "[user-init] EL0 console input validated\n"
+console_input_validated_message_end:
+console_input_failed_message:
+    .ascii "[user-init] ERROR console input probe failed\n"
+console_input_failed_message_end:
 vm_message:
     .ascii "[user-init] EL0 fixed VM reuse validated\n"
 vm_message_end:

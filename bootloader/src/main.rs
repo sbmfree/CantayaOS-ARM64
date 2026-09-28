@@ -30,7 +30,7 @@ use uefi::{
 // UEFI requires a global allocator.  Use `uefi`'s built-in pool allocator.
 // Declared here; enabled by the `alloc` feature of the `uefi` crate.
 
-use cantaya_shared::{BootInfo, BOOT_INFO_MAGIC};
+use cantaya_shared::{BootInfo, BOOT_FLAG_CONSOLE_INPUT_PROBE, BOOT_INFO_MAGIC};
 
 mod elf;
 mod framebuffer;
@@ -86,6 +86,15 @@ fn efi_main() -> Status {
     let init_elf_size = init_elf.len() as u64;
     log::info!("Init ELF @ {:#x} ({} bytes)", init_elf_phys, init_elf_size);
 
+    // The smoke harness adds this file only to its private ESP copy. A normal
+    // interactive boot must not launch the input probe, which waits for test
+    // characters and temporarily owns both console input devices.
+    let boot_flags = if load_os_file(cstr16!("SMOKE.FLG")).is_some() {
+        BOOT_FLAG_CONSOLE_INPUT_PROBE
+    } else {
+        0
+    };
+
     // ── 3. Allocate kernel stack ─────────────────────────────────────────────
     const STACK_PAGES: usize = 16; // 64 KiB
     let stack_phys =
@@ -100,7 +109,7 @@ fn efi_main() -> Status {
     let mut boot_info = BootInfo {
         magic: BOOT_INFO_MAGIC,
         version: 3,
-        _reserved: 0,
+        flags: boot_flags,
         framebuffer: fb_info,
         memory_map: cantaya_shared::MemoryMap::new(),
         rsdp: 0,
@@ -131,7 +140,7 @@ fn load_kernel_elf() -> Option<Vec<u8>> {
     load_os_file(cstr16!("kernel.elf"))
 }
 
-/// Open an ELF from `\EFI\CantayaOS` and retain its exact byte contents.
+/// Open a file from `\EFI\CantayaOS` and retain its exact byte contents.
 fn load_os_file(file_name: &uefi::CStr16) -> Option<Vec<u8>> {
     let sfs_handle = uefi::boot::get_handle_for_protocol::<SimpleFileSystem>().ok()?;
     let mut sfs = uefi::boot::open_protocol_exclusive::<SimpleFileSystem>(sfs_handle).ok()?;
