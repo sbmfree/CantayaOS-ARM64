@@ -1,5 +1,10 @@
 # CantayaOS
 
+CantayaOS is a hobby operating system I am building from scratch in Rust to
+learn and demonstrate how computers run software. It explores low-level
+concepts such as kernels, processes, memory management, hardware interaction,
+and system calls through a working system in QEMU.
+
 CantayaOS is a Rust operating system for AArch64 (ARMv8-A) systems with UEFI
 boot and an NT-like kernel architecture. Its custom PE32+ loader uses
 `uefi-rs`, and its supported development platform is QEMU `aarch64` `virt`
@@ -10,6 +15,17 @@ with OVMF.
 For the active roadmap, constraints, and required validation, start with
 [STATUS.md](STATUS.md). The complete documentation map is in
 [docs/README.md](docs/README.md).
+
+## Implemented Features
+
+- Rust UEFI bootloader that loads the kernel and initial user program.
+- AArch64 kernel execution at EL1 and user processes running at EL0.
+- Isolated user virtual address spaces using TTBR0 and a TTBR1 kernel mapping.
+- Timer-based preemptive scheduling and process and thread management.
+- System calls and typed handles for process and thread objects.
+- VirtIO block device access and FAT-backed loading of the fixed `CHILD.ELF` image.
+- Built-in terminal input through serial and VirtIO keyboard, with framebuffer output.
+- Automated QEMU smoke testing locally and in GitHub Actions.
 
 ## Architecture At A Glance
 
