@@ -19,6 +19,7 @@ const STATUS_TIMEOUT: u64 = 0x0000_0102;
 const STATUS_INVALID_IMAGE_FORMAT: u64 = 0xC000_007B;
 const STATUS_NO_MEMORY: u64 = 0xC000_0017;
 const MAX_WRITE_LENGTH: usize = 1024;
+const MAX_READ_LENGTH: usize = 128;
 const CONSOLE_OUTPUT_HANDLE: u64 = u64::MAX;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,8 +112,57 @@ pub fn sys_write_file(regs: &mut SavedRegs) -> u64 {
     }
 }
 
-pub fn sys_read_file(_regs: &mut SavedRegs) -> u64 {
-    0xC000_0002 // STATUS_NOT_IMPLEMENTED
+pub fn sys_read_file(regs: &mut SavedRegs) -> u64 {
+    // x0 = fixed input pseudo-handle (-2), x1 = writable buffer,
+    // x2 = capacity, x3 = writable u64 count. No data returns STATUS_TIMEOUT
+    // without changing either output. A valid call claims exclusive input.
+    if regs.x[0] != crate::console::INPUT_HANDLE {
+        return STATUS_INVALID_HANDLE;
+    }
+    let Ok(capacity) = usize::try_from(regs.x[2]) else {
+        return STATUS_INVALID_PARAMETER;
+    };
+    if regs.x[1] == 0 || regs.x[3] == 0 || !(1..=MAX_READ_LENGTH).contains(&capacity) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    let Some(process) = crate::executive::ps::scheduler::current_process() else {
+        return STATUS_ACCESS_VIOLATION;
+    };
+    let irq_state = crate::executive::ke::spinlock::IrqState::disable();
+    let result = process.with_user_address_space(|address_space| {
+        if address_space
+            .validate_user_writable_range(regs.x[1], capacity)
+            .is_err()
+            || address_space
+                .validate_user_writable_range(regs.x[3], core::mem::size_of::<u64>())
+                .is_err()
+        {
+            return Err(STATUS_ACCESS_VIOLATION);
+        }
+
+        let mut bytes = [0u8; MAX_READ_LENGTH];
+        let count = crate::console::read_for_user(&process, &mut bytes[..capacity])
+            .map_err(|_| STATUS_ACCESS_DENIED)?;
+        if count == 0 {
+            return Ok(STATUS_TIMEOUT);
+        }
+        if address_space
+            .copy_to_user(regs.x[1], &bytes[..count])
+            .is_err()
+            || address_space
+                .copy_to_user(regs.x[3], &(count as u64).to_le_bytes())
+                .is_err()
+        {
+            return Err(STATUS_ACCESS_VIOLATION);
+        }
+        Ok(0)
+    });
+    irq_state.restore();
+    match result {
+        Some(Ok(status)) | Some(Err(status)) => status,
+        None => STATUS_ACCESS_VIOLATION,
+    }
 }
 
 pub fn sys_create_process(regs: &mut SavedRegs) -> u64 {
@@ -311,6 +361,14 @@ pub fn sys_close(regs: &mut SavedRegs) -> u64 {
     let Some(process) = crate::executive::ps::scheduler::current_process() else {
         return 0xC000_0008; // STATUS_INVALID_HANDLE
     };
+
+    if handle == crate::console::INPUT_HANDLE {
+        return if crate::console::release_input(&process) {
+            0
+        } else {
+            STATUS_INVALID_HANDLE
+        };
+    }
 
     if process.close_handle(handle) {
         0 // STATUS_SUCCESS

@@ -28,9 +28,7 @@ impl Shell {
     /// Poll a bounded amount of input, then return to the scheduler.
     pub fn poll(&mut self) {
         for _ in 0..INPUT_BATCH {
-            let Some(byte) =
-                crate::hal::uart::try_read_byte().or_else(crate::drivers::keyboard::try_read)
-            else {
+            let Some(byte) = crate::console::try_read_for_shell() else {
                 break;
             };
             self.accept(byte);

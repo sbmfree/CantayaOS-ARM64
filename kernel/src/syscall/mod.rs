@@ -29,7 +29,11 @@ pub struct SavedRegs {
 pub extern "C" fn syscall_dispatch(syscall_num: u64, regs: *mut SavedRegs) {
     let regs = unsafe { &mut *regs };
     let number = NtSyscallNumber::from_u64(syscall_num);
-    log::trace!("SVC: {:?} (num={:#x})", number, syscall_num);
+    // A nonblocking console reader may poll repeatedly while waiting for a
+    // keystroke; tracing every empty read would flood the serial console.
+    if number != NtSyscallNumber::NtReadFile {
+        log::trace!("SVC: {:?} (num={:#x})", number, syscall_num);
+    }
 
     let result: u64 = match number {
         NtSyscallNumber::NtWriteFile => nt::sys_write_file(regs),
