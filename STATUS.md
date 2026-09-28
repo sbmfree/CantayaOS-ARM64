@@ -7,7 +7,7 @@
 ## Current Milestone
 
 **Objective:** Establish bounded EL0 console I/O before moving command parsing
-out of EL1. Console output is verified; exclusive input ownership is next.
+out of EL1. Output and exclusive, nonblocking input are now smoke-verified.
 
 ## Verified Baseline For Planning
 
@@ -60,6 +60,12 @@ out of EL1. Console output is verified; exclusive input ownership is next.
   and unsupported bytes before output; accepted ASCII text reaches UART and
   framebuffer. Both init processes verify rejection and successful output in
   QEMU smoke. The pseudo-handle cannot be closed.
+- `NtReadFile` accepts only the fixed `-2` console-input pseudo-handle, a
+  1–128-byte writable buffer, and a writable `u64` result count. It validates
+  both full ranges before claiming input, returns `STATUS_TIMEOUT` without
+  changing either output when no byte is ready, and excludes other EL0
+  processes and the kernel shell while the owner is live. `NtClose(-2)` releases
+  only the caller's claim; process exit lets the shell reclaim it.
 - `NtTerminateThread` accepts only a parent-owned typed thread handle. It
   rejects the current thread, removes a non-current queued target safely,
   signals its handle completion with the requested status, and treats an
@@ -170,10 +176,14 @@ lives in [docs/architecture.md](docs/architecture.md).
 
 ## Latest Verified Milestone
 
-Both init processes now verify the bounded `NtWriteFile(-1)` console-output
-contract: invalid handle, close, length, bytes, and mapping fail without
-output; valid text succeeds. The QEMU smoke test requires two markers and
-retains terminal input and two-round lifecycle checks.
+A smoke-only, controlled copy of `init.elf` now verifies exclusive
+`NtReadFile(-2)` ownership while the kernel prompt is live. It checks handle,
+length, unmapped and cross-page preflight, unchanged outputs on an empty
+read, denial of a competing process, PL011 and keyboard bytes, explicit close,
+double-close, and shell reclaim after owner exit. `make smoke` also boots the
+unmodified disk and checks that the ordinary terminal accepts keyboard and
+serial commands without starting the probe. The earlier output, lifecycle,
+and terminal checks remain required.
 
 ## Latest Planning Decision
 
@@ -186,17 +196,17 @@ Terminal commands, editing, PL011 CRLF suppression, unknown-command recovery,
 and the fixed input-line capacity are checked through smoke input. GitHub
 Actions builds the project and runs the same headless QEMU smoke test on
 Ubuntu with AArch64 UEFI firmware. The tested nightly is pinned to avoid a
-newer toolchain's UEFI linker regression. Console output is a fixed
-pseudo-handle operation, not a generic file-write service; input remains
-unimplemented while the kernel shell owns both input devices.
+newer toolchain's UEFI linker regression. Console output and input are fixed
+pseudo-handle operations, not generic file I/O. The shell's built-in command
+parser still runs in EL1.
 
 ## Recommended Next Milestone
 
-Establish exclusive ownership of PL011 and keyboard input before exposing a
-bounded EL0 read. The kernel shell must stop consuming bytes while an EL0
-console reader owns them; validate the full user output range and keep reads
-nonblocking or explicitly cancellable. Retain the fixed image selectors and
-all existing terminal and lifecycle checks.
+Move the interactive command loop into a controlled EL0 process using the
+bounded `NtReadFile(-2)` and `NtWriteFile(-1)` contracts. Preserve keyboard and
+PL011 editing behavior and all existing built-in command responses; keep the
+EL1 prompt available as a fallback until QEMU smoke proves parity. Do not
+expand executable image selectors or expose generic device/file handles.
 
 ### Follow-On Candidates
 
@@ -257,9 +267,10 @@ None recorded for local or CI smoke.
 ## Verification Requirements
 
 Run `make smoke` for meaningful kernel, MMU, scheduler, syscall, process, or
-I/O changes, including keyboard input. It is the regression check for the QEMU
-`virt`/TCG path and must demonstrate the required runtime markers; a
-successful compile alone is not completion. Smoke now injects `help`, Ctrl-U,
+I/O changes, including keyboard input. It exercises a private smoke-flagged
+disk and an unmodified normal boot, and is the regression check for the QEMU
+`virt`/TCG path; a successful compile alone is not completion. Smoke injects
+`help`, Ctrl-U,
 Backspace, Shift, Caps Lock, and Ctrl-L key events and checks responses; additional
 keyboard behavior changes need targeted key-event checks. This is not hardware
 certification or evidence of Windows application compatibility.

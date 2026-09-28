@@ -91,8 +91,15 @@ LED feedback is not implemented. PL011 serial input remains available through
 EL0 diagnostic output uses only `NtWriteFile(-1, text, length)`, where `-1` is a
 fixed console-output pseudo-handle rather than a closable file-table entry.
 The syscall validates a bounded user range and supported ASCII text before a
-shared console path writes to both UART and framebuffer. `NtReadFile` remains
-unimplemented, so the System thread alone currently consumes terminal input.
+shared console path writes to both UART and framebuffer.
+`NtReadFile(-2, buffer, capacity, count)` provides a separate, fixed input
+pseudo-handle.
+It validates both writable EL0 ranges before claiming PL011 and keyboard input
+for one process; an empty read returns `STATUS_TIMEOUT` without writing output.
+Other processes are denied until the owner calls `NtClose(-2)` or exits. The
+System shell does not poll input while a live EL0 owner holds that claim.
+Normal boots leave the shell in control; only the private smoke ESP requests a
+controlled input probe through a `BootInfo` flag.
 
 ## Processes, Threads, And Lifetime
 

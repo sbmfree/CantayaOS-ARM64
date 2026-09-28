@@ -89,7 +89,7 @@ make iso
 # Build the image and launch QEMU with a visible display.
 make run
 
-# Build and boot QEMU headlessly, validating the runtime smoke contract.
+# Build and boot QEMU headlessly, validating smoke and ordinary interactive boots.
 make smoke
 
 # Remove generated build artifacts and disk images.
@@ -110,6 +110,8 @@ The prompt accepts built-in commands, not arbitrary programs or file paths.
 
 `make smoke` is the current regression check. Its scope and expected runtime
 evidence are documented in [docs/verified-features.md](docs/verified-features.md).
+It runs the input-ownership probe only on a private copy of the boot disk, then
+checks the unmodified disk's interactive keyboard and serial input.
 The Rust GitHub Actions workflow also runs this headless QEMU check on Ubuntu;
 CI installs AArch64 UEFI firmware and uses a longer timeout for emulation.
 

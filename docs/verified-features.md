@@ -246,6 +246,13 @@ next, read [STATUS.md](../STATUS.md).
   lengths, mappings, and unsupported bytes before producing any output.
   Both init processes check these failures and a valid write in QEMU smoke;
   the framebuffer mirror is source-reviewed, not pixel-compared by smoke.
+- `NtReadFile` accepts only the fixed `-2` console-input pseudo-handle with
+  capacity 1–128 and a writable `u64` count pointer. It validates both full
+  writable EL0 ranges before claiming input. With no data it returns
+  `STATUS_TIMEOUT` and leaves both outputs unchanged; another process gets
+  `STATUS_ACCESS_DENIED`. A successful call copies immediately available
+  PL011 or VirtIO-keyboard bytes and the count. `NtClose(-2)` releases only the
+  owner's claim; a completed owner is reclaimed by the next shell read.
 - `NtAllocateVirtual` and `NtQuerySystemInfo` copy their outputs only to fully
   validated writable EL0 mappings. `NtAllocateVirtual` owns mappings in the
   calling process instead of exposing a kernel virtual address.
@@ -341,6 +348,16 @@ Console-output preflight adds two
 process checks invalid-handle, close, zero and excessive lengths, unsupported
 bytes, an unmapped pointer, and a valid write. `make smoke` passed with all
 previous terminal and lifecycle assertions.
+Console-input preflight uses a controlled extra init copy on a private
+smoke-flagged disk. It checks invalid handle and close, zero and excessive
+capacity, unmapped and cross-page output ranges, untouched outputs on an empty
+read, denial of a competing process, PL011 `@` and keyboard `k` reception,
+close and double-close, then exits holding a fresh claim. The shell processes
+the subsequent keyboard `help` only after that owner completes. `make smoke`
+also boots the unmodified disk separately and verifies that the ordinary
+terminal accepts keyboard `help` and serial `echo normalboot` without running
+the probe. Both boots passed locally with the prior lifecycle and terminal
+assertions retained.
 
 The terminal and keyboard change also passed `make smoke`; the smoke test now
 injects `help` and an edited `echo` command through the keyboard and requires
