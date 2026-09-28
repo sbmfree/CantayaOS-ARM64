@@ -5,6 +5,8 @@ boot and an NT-like kernel architecture. Its custom PE32+ loader uses
 `uefi-rs`, and its supported development platform is QEMU `aarch64` `virt`
 with OVMF.
 
+![CantayaOS graphical terminal running in QEMU](docs/cantayaos-screenshot.png)
+
 For the active roadmap, constraints, and required validation, start with
 [STATUS.md](STATUS.md). The complete documentation map is in
 [docs/README.md](docs/README.md).
