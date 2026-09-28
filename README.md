@@ -1,7 +1,7 @@
 # CantayaOS
 [![Build](https://github.com/sbmfree/CantayaOS-ARM64/actions/workflows/rust.yml/badge.svg?branch=main)](https://github.com/sbmfree/CantayaOS-ARM64/actions/workflows/rust.yml)
 
-CantayaOS is a independent operating system project I am building from scratch in Rust to
+CantayaOS is an independent operating system project I am building from scratch in Rust to
 learn and demonstrate how computers run software. It explores low-level
 concepts such as kernels, processes, memory management, hardware interaction,
 and system calls through a working system in QEMU.
