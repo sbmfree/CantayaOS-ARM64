@@ -134,6 +134,7 @@ REQUIRED_PATTERNS = (
 REQUIRED_MARKER_COUNTS = {
     "Ps: reaped thread": 5,
     "[user-init] EL0 fixed VM reuse validated": 2,
+    "[user-init] EL0 console output contract validated": 2,
     "[user-init] EL0 thread handle wait validated": 2,
     "[user-init] external thread handle termination validated": 2,
     "[user-init] blocked typed wait thread termination validated": 2,

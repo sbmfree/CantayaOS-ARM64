@@ -19,6 +19,7 @@ const STATUS_TIMEOUT: u64 = 0x0000_0102;
 const STATUS_INVALID_IMAGE_FORMAT: u64 = 0xC000_007B;
 const STATUS_NO_MEMORY: u64 = 0xC000_0017;
 const MAX_WRITE_LENGTH: usize = 1024;
+const CONSOLE_OUTPUT_HANDLE: u64 = u64::MAX;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NtSyscallNumber {
@@ -65,11 +66,16 @@ impl NtSyscallNumber {
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub fn sys_write_file(regs: &mut SavedRegs) -> u64 {
-    // x0 = handle, x1 = buf ptr, x2 = len
-    let _handle = regs.x[0];
+    // x0 = fixed console pseudo-handle (-1), x1 = text ptr, x2 = byte length.
+    // This is not a generic file write and does not accept typed handles.
+    if regs.x[0] != CONSOLE_OUTPUT_HANDLE {
+        return STATUS_INVALID_HANDLE;
+    }
     let user_buffer = regs.x[1];
-    let len = regs.x[2] as usize;
-    if user_buffer == 0 || len == 0 || len > MAX_WRITE_LENGTH {
+    let Ok(len) = usize::try_from(regs.x[2]) else {
+        return STATUS_INVALID_PARAMETER;
+    };
+    if user_buffer == 0 || !(1..=MAX_WRITE_LENGTH).contains(&len) {
         return STATUS_INVALID_PARAMETER;
     }
 
@@ -82,11 +88,21 @@ pub fn sys_write_file(regs: &mut SavedRegs) -> u64 {
     });
     match copy_result {
         Some(Ok(())) => {
-            for &byte in &copied[..len] {
-                crate::hal::uart::write_byte(byte);
+            // The framebuffer currently has an ASCII glyph path and understands
+            // only these terminal controls. Reject bytes the two sinks would
+            // render differently before emitting any part of the write.
+            if !copied[..len]
+                .iter()
+                .all(|&byte| matches!(byte, b'\x07' | b'\x08' | b'\r' | b'\n' | b' '..=b'~'))
+            {
+                return STATUS_INVALID_PARAMETER;
             }
+            let Ok(text) = core::str::from_utf8(&copied[..len]) else {
+                return STATUS_INVALID_PARAMETER;
+            };
+            crate::console::write(format_args!("{text}"));
             log::info!(
-                "NtWriteFile copied {} byte(s) from validated EL0 memory",
+                "NtWriteFile copied {} byte(s) from validated EL0 memory to console",
                 len
             );
             0

@@ -12,6 +12,7 @@ extern crate alloc;
 use cantaya_shared::{BootInfo, BOOT_INFO_MAGIC};
 
 mod arch;
+mod console;
 mod drivers;
 mod executive;
 mod hal;

@@ -47,6 +47,78 @@ _start:
     sub x2, x2, x1
     mov x8, #0x8
     svc #0
+    cbnz x0, 2f
+
+    // NtWriteFile currently accepts only the fixed -1 console output
+    // pseudo-handle. Reject bad handles, lengths, mappings, and bytes before
+    // any text reaches either console sink; the pseudo-handle is not closable.
+    movz x20, #0x0008
+    movk x20, #0xc000, lsl #16
+    mov x0, xzr
+    adr x1, message
+    mov x2, #1
+    mov x8, #0x8
+    svc #0
+    cmp x0, x20
+    b.ne 2f
+
+    movn x0, #0
+    mov x8, #0xf
+    svc #0
+    cmp x0, x20
+    b.ne 2f
+
+    movz x21, #0x000d
+    movk x21, #0xc000, lsl #16
+    movn x0, #0
+    adr x1, message
+    mov x2, xzr
+    mov x8, #0x8
+    svc #0
+    cmp x0, x21
+    b.ne 2f
+
+    movn x0, #0
+    adr x1, message
+    mov x2, #1025
+    mov x8, #0x8
+    svc #0
+    cmp x0, x21
+    b.ne 2f
+
+    movn x0, #0
+    adr x1, invalid_console_text
+    mov x2, #1
+    mov x8, #0x8
+    svc #0
+    cmp x0, x21
+    b.ne 2f
+
+    movn x0, #0
+    adr x1, invalid_console_control
+    mov x2, #1
+    mov x8, #0x8
+    svc #0
+    cmp x0, x21
+    b.ne 2f
+
+    movz x22, #0x0005
+    movk x22, #0xc000, lsl #16
+    movn x0, #0
+    movz x1, #0x0900, lsl #16
+    mov x2, #1
+    mov x8, #0x8
+    svc #0
+    cmp x0, x22
+    b.ne 2f
+
+    movn x0, #0
+    adr x1, console_output_message
+    adr x2, console_output_message_end
+    sub x2, x2, x1
+    mov x8, #0x8
+    svc #0
+    cbnz x0, 2f
 
     // Allocate and release one process-owned user page. The in/out base
     // address lives on the guarded EL0 stack and therefore exercises both
@@ -2822,6 +2894,13 @@ mixed_process_waiting_sibling_failed:
 message:
     .ascii "[user-init] EL0 context resume validated\n"
 message_end:
+invalid_console_text:
+    .byte 0xff
+invalid_console_control:
+    .byte 0x1b
+console_output_message:
+    .ascii "[user-init] EL0 console output contract validated\n"
+console_output_message_end:
 vm_message:
     .ascii "[user-init] EL0 fixed VM reuse validated\n"
 vm_message_end:

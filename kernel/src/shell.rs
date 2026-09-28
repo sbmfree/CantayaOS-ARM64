@@ -133,8 +133,7 @@ impl Shell {
 }
 
 fn output(args: core::fmt::Arguments<'_>) {
-    crate::hal::uart::write_console(args);
-    crate::hal::framebuffer::write_fmt(args);
+    crate::console::write(args);
 }
 
 fn clear_output() {
