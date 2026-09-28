@@ -140,4 +140,4 @@ subsystem design, read [docs/architecture.md](docs/architecture.md).
 
 ## License
 
-MIT - Copyright 2026 CantayaTech
+MIT - Copyright 2026 CantayaTech. See the [LICENSE](LICENSE) file.
