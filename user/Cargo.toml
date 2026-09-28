@@ -3,7 +3,7 @@ name = "cantaya-user-init"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
-license.workspace = true
+license-file.workspace = true
 
 [[bin]]
 name = "cantaya-user-init"

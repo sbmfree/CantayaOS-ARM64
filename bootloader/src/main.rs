@@ -43,7 +43,7 @@ fn efi_main() -> Status {
     uefi::helpers::init().expect("Failed to init UEFI helpers");
 
     log::info!("CantayaOS UEFI Bootloader v{}", env!("CARGO_PKG_VERSION"));
-    log::info!("(c) CantayaTech — AArch64");
+    log::info!("(c) Oliwier Wieczorek — AArch64");
 
     // ── 1. Framebuffer ───────────────────────────────────────────────────────
     // GOP may not be available in headless mode — continue without it.

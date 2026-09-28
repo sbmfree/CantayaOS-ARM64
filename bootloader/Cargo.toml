@@ -3,7 +3,7 @@ name        = "cantaya-boot"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
-license.workspace = true
+license-file.workspace = true
 
 # The bootloader is always compiled for the UEFI target; this is enforced by
 # `.cargo/config.toml` setting the default target to `aarch64-unknown-uefi`.

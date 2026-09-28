@@ -11,8 +11,8 @@ members = [
 [workspace.package]
 version     = "0.1.0"
 edition     = "2021"
-authors     = ["CantayaTech"]
-license     = "MIT"
+authors     = ["Oliwier Wieczorek"]
+license-file = "LICENSE"
 
 [profile.dev]
 opt-level   = 0

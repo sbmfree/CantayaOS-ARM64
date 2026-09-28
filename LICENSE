@@ -1,21 +1,78 @@
-MIT License
+CantayaOS Source Available License
+Version 1.0
 
-Copyright (c) 2026 CantayaTech
+Copyright © 2026 Oliwier Wieczorek.
+All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This is a source-available license, not an OSI-approved open source license.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. Scope and earlier versions
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+This license applies to versions of CantayaOS first published with this license
+and to later versions that expressly include it (the "Software"), including
+their source code, documentation, and artwork, to the extent Oliwier Wieczorek
+owns or may license that material. It also applies to builds and modifications
+of that Software. Third-party components remain subject to their own licenses
+and copyright notices.
+
+Versions of CantayaOS published before this license change under the MIT
+License remain available under their original terms. This license does not
+retroactively revoke or limit rights already granted for those versions.
+
+2. Limited permission to inspect and learn
+
+You may view, inspect, study, and evaluate the Software. You may download and
+make copies reasonably necessary for that purpose. For non-commercial personal
+or educational purposes, you may also build, run, and modify the Software
+privately. These permissions are non-exclusive, non-transferable, and
+non-sublicensable. You must retain this license and all existing copyright and
+third-party notices in any copies you make.
+
+Evaluation by a prospective commercial licensee is permitted solely to decide
+whether to seek a separate written license; it does not authorize commercial
+deployment or exploitation.
+
+3. Restrictions
+
+Without Oliwier Wieczorek's prior, explicit written permission, you may not:
+
+- use the Software, or any substantial part of it, for a commercial purpose,
+  including in a business product, service, or internal business operation;
+- sell, rent, or otherwise monetize the Software or any substantial part of it;
+- publish, share, transfer, or redistribute the Software, in source or binary
+  form, whether modified or unmodified, including a fork or derivative work,
+  except for on-platform forking permitted independently by GitHub's terms;
+- distribute a proprietary or closed-source fork or derivative work;
+- sublicense the Software or grant others rights to it;
+- incorporate a substantial part of the Software into a commercial product; or
+- use "CantayaOS", "CantayaTech", or associated branding or logos to market or
+  distribute a derivative product.
+
+Commercial licensing and exceptions to these restrictions are available only
+through separate, explicit written permission from Oliwier Wieczorek. No
+permission is implied by access to a public repository, by a contribution, or
+by silence.
+
+This license does not limit rights granted independently by GitHub's terms for
+viewing or forking a public repository through GitHub's own functionality. A
+GitHub fork does not grant permission under this license to redistribute the
+Software elsewhere or exploit it commercially.
+
+4. Ownership and reserved rights
+
+Oliwier Wieczorek retains all copyright and other rights in his original
+CantayaOS material. This license transfers no ownership of that material to
+users or contributors. No trademark, logo, or patent rights are granted except
+as expressly stated here. Rights not expressly granted are reserved.
+
+Oliwier Wieczorek may license, sell, or commercially exploit material he owns
+under separate terms; change the license of future versions; or release future
+versions as proprietary, closed-source software. Other contributors, if any,
+retain rights in their own contributions unless they separately assign them.
+
+5. Termination and disclaimer
+
+The permissions in this license end if you violate its terms. The Software is
+provided "as is", without warranties of any kind, to the extent permitted by
+applicable law. To the extent permitted by applicable law, the copyright holder
+is not liable for damages arising from use of the Software.

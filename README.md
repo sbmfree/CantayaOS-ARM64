@@ -138,6 +138,17 @@ subsystem design, read [docs/architecture.md](docs/architecture.md).
 
 ---
 
-## License
+## Licensing
 
-MIT - Copyright 2026 CantayaTech. See the [LICENSE](LICENSE) file.
+CantayaOS is **source available, not open source**. You may inspect and study
+the source, and the [CantayaOS Source Available License](LICENSE) permits
+private non-commercial personal and educational use. Commercial use,
+redistribution, resale, sublicensing, and distribution of modified or
+closed-source derivatives require prior, explicit written permission from
+Oliwier Wieczorek. Commercial licensing is available only through that written
+permission.
+
+Copyright © 2026 Oliwier Wieczorek. All rights reserved. Earlier versions
+released under the MIT License retain their original license; this license
+applies to versions first published with it. Third-party materials and
+dependencies retain their own licenses.
