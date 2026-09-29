@@ -101,7 +101,15 @@ pseudo-handle.
 It validates both writable EL0 ranges before claiming PL011 and keyboard input
 for one process; an empty read returns `STATUS_TIMEOUT` without writing output.
 Other processes are denied until the owner calls `NtClose(-2)` or exits. The
-System shell does not poll input while a live EL0 owner holds that claim.
+EL1 fallback parser does not consume input while a live EL0 owner holds that
+claim.
+`NtWaitForConsoleInput(-2)` blocks a thread on the live owner's claim without
+consuming a byte. The System thread checks PL011 and a bounded decoded-key
+FIFO, waking one registered reader when input is ready. A close advances the
+claim generation and wakes old waiters with `STATUS_INVALID_HANDLE`; external
+thread or process termination cancels the registration before reaping. The EL0
+shell uses this wait after an empty nonblocking `NtReadFile`, while the EL1
+fallback remains available if the shell exits.
 Normal boots give the EL0 shell input ownership; only the private smoke ESP
 requests a controlled input probe through a `BootInfo` flag before starting
 that shell. The EL0 `clear` command uses a narrow owner-only redraw syscall
@@ -123,7 +131,7 @@ its scheduler record through typed handles. A terminated thread is reaped only
 from a later active context, which prevents freeing its currently active kernel
 stack. A process becomes signaled after its final active thread exits.
 The scheduler keeps a separate internal set for threads blocked on retained
-typed process or thread completions; it is distinct from the ready run queue
+typed process/thread completions or console readiness; it is distinct from the ready run queue
 and the ordered finite-timeout queue. Wake and timeout remove a thread from
 that set before it is made ready. `NtTerminateProcess(-1, status)` is
 process-wide: it removes ready siblings and typed-completion-blocked siblings

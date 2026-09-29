@@ -253,6 +253,13 @@ next, read [STATUS.md](../STATUS.md).
   `STATUS_ACCESS_DENIED`. A successful call copies immediately available
   PL011 or VirtIO-keyboard bytes and the count. `NtClose(-2)` releases only the
   owner's claim; a completed owner is reclaimed by the next shell read.
+- `NtWaitForConsoleInput(-2)` registers a cancellable scheduler wait on the
+  exclusive input claim. The System thread probes PL011 and decoded VirtIO
+  bytes, waking one waiter without consuming data. `NtClose(-2)` invalidates
+  the claim generation; external termination removes the registration before
+  the raw thread can be reaped. The EL0 shell sleeps after an empty read.
+  The smoke probe blocks on serial and keyboard readiness and externally
+  terminates a child blocked in this wait, then reclaims input successfully.
 - The controlled EL0 shell uses fixed class 0 (free pages) and class 1
   (elapsed 100 Hz ticks) of `NtQuerySystemInfo` for `mem` and `uptime`.
   `NtClearConsole` redraws UART and framebuffer only for the live input owner;
@@ -357,8 +364,10 @@ Console-input preflight uses a controlled extra init copy on a private
 smoke-flagged disk. It checks invalid handle and close, zero and excessive
 capacity, unmapped and cross-page output ranges, untouched outputs on an empty
 read, denial of a competing process, PL011 `@` and keyboard `k` reception,
-close and double-close, then exits holding a fresh claim. The competing process
-also verifies that it cannot clear the terminal. The System thread then starts
+close and double-close, then externally terminates a child blocked in the new
+console wait before reclaiming input and exiting with a fresh claim. The probe
+uses the wait syscall for both `@` and `k`, and the competing process verifies
+that it cannot wait or clear the terminal. The System thread then starts
 the EL0 command loop; smoke waits for its readiness marker before injecting
 keyboard `help`. `make smoke` also boots the unmodified disk separately and
 verifies that the ordinary EL0 terminal accepts keyboard `help` and serial

@@ -107,16 +107,16 @@ also accepts input. Commands and their output appear in both places. Type
 `help` for the built-in commands: `help`, `info`, `uptime`, `mem`,
 `echo <text>`, and `clear`. Backspace edits the line; Ctrl-U clears it, and Ctrl-L
 redraws the terminal screen. The current keyboard map covers US ASCII keys,
-Shift, Caps Lock, and these editing keys; the EL0 shell polls its exclusive
-console-input handle.
+Shift, Caps Lock, and these editing keys; the EL0 shell blocks on its exclusive
+console-input handle when a bounded read finds no byte ready.
 The prompt accepts built-in commands, not arbitrary programs or file paths.
 
 `make smoke` is the current regression check. Its scope and expected runtime
 evidence are documented in [docs/verified-features.md](docs/verified-features.md).
 It runs the input-ownership probe only on a private copy of the boot disk, then
 checks the unmodified disk's interactive keyboard and serial input.
-The Rust GitHub Actions workflow also runs this headless QEMU check on Ubuntu;
-CI installs AArch64 UEFI firmware and uses a longer timeout for emulation.
+The Rust GitHub Actions workflow also runs this headless QEMU check on Ubuntu
+with AArch64 UEFI firmware.
 
 ---
 

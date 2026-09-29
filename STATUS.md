@@ -6,8 +6,8 @@
 
 ## Current Milestone
 
-**Objective:** Run the interactive command loop in a controlled EL0 process
-over the bounded console I/O contracts, retaining an EL1 fallback prompt.
+**Objective:** Let the controlled EL0 terminal block on cancellable console
+input readiness while retaining bounded reads and the EL1 fallback prompt.
 
 ## Verified Baseline For Planning
 
@@ -69,6 +69,17 @@ over the bounded console I/O contracts, retaining an EL1 fallback prompt.
   changing either output when no byte is ready, and excludes other EL0
   processes and the kernel shell while the owner is live. `NtClose(-2)` releases
   only the caller's claim; process exit lets the shell reclaim it.
+- `NtWaitForConsoleInput(-2)` claims the same exclusive input pseudo-handle and
+  blocks the caller until PL011 or keyboard input is ready. The System thread
+  checks readiness and wakes one waiter of the live owner; keyboard events are
+  drained into a bounded decoded-byte FIFO. Closing the claim invalidates its
+  generation and wakes blocked callers with `STATUS_INVALID_HANDLE`.
+  Thread/process termination removes console wait registrations before reaping.
+  The EL0 shell waits after an empty bounded read instead of spinning.
+- The private smoke boot blocks its input probe on both serial and keyboard
+  readiness, then externally terminates a child blocked in the console wait.
+  It requires the cancellation log, reclaims input without a stale waiter,
+  and retains the full terminal and lifecycle contract plus ordinary boot.
 - EL0 `help`/`?`, `info`, `uptime`, `mem`, `echo`, and `clear` preserve the
   earlier terminal responses and editing behavior. A fixed system-information
   class exposes elapsed 100 Hz ticks; an input-owner-only clear service redraws
@@ -205,15 +216,16 @@ Ubuntu with AArch64 UEFI firmware. The tested nightly is pinned to avoid a
 newer toolchain's UEFI linker regression. Console output and input are fixed
 pseudo-handle operations, not generic file I/O. The EL1 parser remains a
 fallback; smoke rejects unexpected fallback during the EL0 command checks.
+The smoke harness uses explicit QMP key down/up events and a private serial
+socket, with bounded pacing for the PL011 line-capacity probe.
 
 ## Recommended Next Milestone
 
-Replace the EL0 shell's repeated empty-read polling with a waitable,
-cancellable console-input readiness path. The kernel must wake only the live
-owner when PL011 or keyboard input arrives, and shell exit or termination must
-cancel its wait without leaving a stale waiter. Keep `NtReadFile(-2)` bounded,
-preserve the EL1 fallback, and retain all existing terminal and lifecycle
-regressions. Do not expand image selectors or generic device/file handles.
+Replace System-thread console readiness polling with PL011 RX and VirtIO input
+interrupt-driven wakeups. Preserve the exclusive `-2` claim, generation-based
+close cancellation, bounded `NtReadFile`, blocked-thread/process termination
+cleanup, EL1 fallback, and both QEMU smoke boots. Do not expand image selectors
+or introduce generic device/file handles.
 
 ### Follow-On Candidates
 
