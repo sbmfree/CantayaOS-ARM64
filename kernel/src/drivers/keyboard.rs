@@ -4,11 +4,13 @@
 //! not needed by the built-in terminal.
 
 use aarch64_cpu::asm::barrier;
+use core::sync::atomic::{AtomicU64, Ordering};
 use spin::Mutex;
 
 const MMIO_BASE: u64 = 0x0A00_0000;
 const MMIO_STRIDE: u64 = 0x200;
 const MMIO_SLOTS: u64 = 32;
+const VIRTIO_IRQ_BASE: usize = 48; // QEMU virt SPI 16
 const MAGIC_VALUE: usize = 0x000;
 const VERSION: usize = 0x004;
 const DEVICE_ID: usize = 0x008;
@@ -92,6 +94,7 @@ struct VirtioKeyboard {
 }
 
 static KEYBOARD: Mutex<Option<VirtioKeyboard>> = Mutex::new(None);
+static INPUT_INTERRUPT_COUNT: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug)]
 enum InitError {
@@ -113,10 +116,39 @@ pub fn init() {
     match VirtioKeyboard::new() {
         Ok(device) => {
             log::info!("VirtIO keyboard: MMIO input ready at {:#x}", device.base);
+            let slot = ((device.base - MMIO_BASE) / MMIO_STRIDE) as usize;
             *keyboard = Some(device);
+            drop(keyboard);
+            crate::hal::gic::register_handler(VIRTIO_IRQ_BASE + slot, on_input_interrupt);
         }
         Err(error) => log::warn!("VirtIO keyboard unavailable: {:?}", error),
     }
+}
+
+fn on_input_interrupt() {
+    let irq_state = crate::executive::ke::spinlock::IrqState::disable();
+    let received = KEYBOARD.lock().as_mut().is_some_and(|keyboard| {
+        let status = read_reg(keyboard.base, INTERRUPT_STATUS);
+        // Drain before and after ACK: an event that arrives just before ACK
+        // can share the asserted ISR bit, so it must not be left unwoken.
+        keyboard.drain_pending();
+        if status != 0 {
+            write_reg(keyboard.base, INTERRUPT_ACK, status);
+        }
+        keyboard.drain_pending();
+        if status & 1 != 0 {
+            INPUT_INTERRUPT_COUNT.fetch_add(1, Ordering::Relaxed);
+        }
+        keyboard.pending_len != 0
+    });
+    if received {
+        crate::console::wake_ready_waiter();
+    }
+    irq_state.restore();
+}
+
+pub fn input_interrupt_count() -> u64 {
+    INPUT_INTERRUPT_COUNT.load(Ordering::Relaxed)
 }
 
 /// Return one decoded input byte, if the event queue has a key press.
@@ -342,10 +374,6 @@ impl VirtioKeyboard {
             }
             barrier::dsb(barrier::ISHST);
             write_reg(self.base, QUEUE_NOTIFY, 0);
-            let status = read_reg(self.base, INTERRUPT_STATUS);
-            if status != 0 {
-                write_reg(self.base, INTERRUPT_ACK, status);
-            }
 
             if let Some(event) = event {
                 if let Some(byte) = self.decode(event) {

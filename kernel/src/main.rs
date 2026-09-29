@@ -115,6 +115,7 @@ pub extern "C" fn kernel_main_higher_half(boot_info_ptr: *const BootInfo) -> ! {
     // ── HAL peripherals ──────────────────────────────────────────────────
     hal::gic::init();
     hal::timer::init();
+    hal::uart::enable_input_interrupts();
     log::info!("GIC + timer initialised");
 
     // ── Framebuffer console ──────────────────────────────────────────────

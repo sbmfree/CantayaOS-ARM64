@@ -1,9 +1,10 @@
 //! PL011 UART driver.
 //!
 //! QEMU `virt` machine maps the UART at 0x0900_0000.
-//! We drive it in polled mode (no FIFO interrupts needed for early boot).
+//! Early output is polled; receive interrupts feed a bounded software FIFO.
 
 use core::fmt::{self, Write};
+use core::sync::atomic::{AtomicU64, Ordering};
 use spin::Mutex;
 
 const UART_BASE: usize = 0x0900_0000;
@@ -16,14 +17,54 @@ const FBRD: usize = 0x028; // Fractional baud rate divisor
 const LCR_H: usize = 0x02C; // Line control
 const CR: usize = 0x030; // Control register
 const IMSC: usize = 0x038; // Interrupt mask
+const ICR: usize = 0x044; // Interrupt clear
 
 const FR_TXFF: u32 = 1 << 5; // TX FIFO full
 const FR_RXFE: u32 = 1 << 4; // RX FIFO empty
+const RX_IRQ: u32 = 1 << 4;
+const RX_TIMEOUT_IRQ: u32 = 1 << 6;
+const UART_IRQ: usize = 33; // QEMU virt SPI 1
+const RX_QUEUE_SIZE: usize = 256;
+const RX_DRAIN_LIMIT: usize = 32; // greater than the PL011's 16-byte hardware FIFO
 const CR_UARTEN: u32 = 1 << 0;
 const CR_TXE: u32 = 1 << 8;
 const CR_RXE: u32 = 1 << 9;
 const LCR_WLEN8: u32 = 0b11 << 5;
 const LCR_FEN: u32 = 1 << 4; // FIFO enable
+
+struct RxQueue {
+    bytes: [u8; RX_QUEUE_SIZE],
+    head: usize,
+    len: usize,
+}
+
+static RX_QUEUE: Mutex<RxQueue> = Mutex::new(RxQueue {
+    bytes: [0; RX_QUEUE_SIZE],
+    head: 0,
+    len: 0,
+});
+static RX_INTERRUPT_COUNT: AtomicU64 = AtomicU64::new(0);
+
+impl RxQueue {
+    fn push(&mut self, byte: u8) {
+        if self.len == RX_QUEUE_SIZE {
+            return;
+        }
+        let tail = (self.head + self.len) % RX_QUEUE_SIZE;
+        self.bytes[tail] = byte;
+        self.len += 1;
+    }
+
+    fn pop(&mut self) -> Option<u8> {
+        if self.len == 0 {
+            return None;
+        }
+        let byte = self.bytes[self.head];
+        self.head = (self.head + 1) % RX_QUEUE_SIZE;
+        self.len -= 1;
+        Some(byte)
+    }
+}
 
 #[inline]
 fn uart_base() -> usize {
@@ -65,6 +106,44 @@ pub unsafe fn init() {
     }
 }
 
+/// Enable PL011 receive and receive-timeout interrupts once the GIC is ready.
+pub fn enable_input_interrupts() {
+    let irq_state = crate::executive::ke::spinlock::IrqState::disable();
+    unsafe {
+        mmio_write(ICR, RX_IRQ | RX_TIMEOUT_IRQ);
+        mmio_write(IMSC, RX_IRQ | RX_TIMEOUT_IRQ);
+    }
+    crate::hal::gic::register_handler(UART_IRQ, on_input_interrupt);
+    irq_state.restore();
+}
+
+fn on_input_interrupt() {
+    let irq_state = crate::executive::ke::spinlock::IrqState::disable();
+    let mut received = false;
+    {
+        let mut queue = RX_QUEUE.lock();
+        unsafe {
+            for _ in 0..RX_DRAIN_LIMIT {
+                if mmio_read(FR) & FR_RXFE != 0 {
+                    break;
+                }
+                queue.push(mmio_read(DR) as u8);
+                received = true;
+            }
+            mmio_write(ICR, RX_IRQ | RX_TIMEOUT_IRQ);
+        }
+    }
+    if received {
+        RX_INTERRUPT_COUNT.fetch_add(1, Ordering::Relaxed);
+        crate::console::wake_ready_waiter();
+    }
+    irq_state.restore();
+}
+
+pub fn input_interrupt_count() -> u64 {
+    RX_INTERRUPT_COUNT.load(Ordering::Relaxed)
+}
+
 /// Write a single byte (polls until TX FIFO has space).
 #[inline]
 pub fn write_byte(b: u8) {
@@ -77,19 +156,21 @@ pub fn write_byte(b: u8) {
 /// Read a byte if available, or `None`.
 #[inline]
 pub fn try_read_byte() -> Option<u8> {
-    unsafe {
-        if mmio_read(FR) & FR_RXFE != 0 {
-            None
-        } else {
-            Some(mmio_read(DR) as u8)
-        }
-    }
+    let irq_state = crate::executive::ke::spinlock::IrqState::disable();
+    let queued = RX_QUEUE.lock().pop();
+    let result =
+        queued.or_else(|| unsafe { (mmio_read(FR) & FR_RXFE == 0).then(|| mmio_read(DR) as u8) });
+    irq_state.restore();
+    result
 }
 
 /// Check receive readiness without consuming the next PL011 byte.
 #[inline]
 pub fn has_input() -> bool {
-    unsafe { mmio_read(FR) & FR_RXFE == 0 }
+    let irq_state = crate::executive::ke::spinlock::IrqState::disable();
+    let ready = RX_QUEUE.lock().len != 0 || unsafe { mmio_read(FR) & FR_RXFE == 0 };
+    irq_state.restore();
+    ready
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

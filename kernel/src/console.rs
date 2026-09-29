@@ -158,7 +158,7 @@ pub fn cancel_waiter(waiter: usize) {
     with_input_state(|state| state.waiters.retain(|entry| *entry != waiter));
 }
 
-/// The System thread probes readiness and wakes one thread of the live owner.
+/// An input IRQ wakes one waiter of the live owner.
 /// Device bytes remain queued until that thread performs `NtReadFile`.
 pub fn wake_ready_waiter() {
     let irq_state = crate::executive::ke::spinlock::IrqState::disable();

@@ -942,10 +942,15 @@ fn system_thread_main() {
         enqueue(probe_thread);
         while probe_process.exit_status().is_none() {
             fallback.poll();
-            crate::console::wake_ready_waiter();
             yield_now();
         }
         drop(probe_process);
+        assert!(
+            crate::hal::uart::input_interrupt_count() != 0
+                && crate::drivers::keyboard::input_interrupt_count() != 0,
+            "console input probe did not receive both device IRQs"
+        );
+        log::info!("Console: PL011 and VirtIO input IRQs validated");
     }
 
     crate::hal::framebuffer::show_shell_screen();
@@ -953,7 +958,6 @@ fn system_thread_main() {
         Ok((shell_process, shell_thread)) => {
             enqueue(shell_thread);
             while shell_process.exit_status().is_none() {
-                crate::console::wake_ready_waiter();
                 yield_now();
             }
             log::warn!("Ps: EL0 shell exited; restoring EL1 fallback prompt");

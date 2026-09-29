@@ -131,6 +131,7 @@ REQUIRED_MARKERS = (
     "[user-init] EL0 console wait cancellation armed",
     "[user-init] EL0 console wait cancellation validated",
     "Ps: external process termination cleared 1 console input wait registration(s)",
+    "Console: PL011 and VirtIO input IRQs validated",
     CONSOLE_INPUT_VALIDATED,
     USER_SHELL_READY,
     KEYBOARD_HELP_RESPONSE,
@@ -241,8 +242,9 @@ def connect_keyboard_monitor(monitor_path: Path):
     return monitor, stream
 
 
-def send_keyboard_keys(stream, keys: tuple[str, ...]) -> None:
+def send_keyboard_keys(stream, keys: tuple[str, ...], serial_log: Path, deadline: float) -> None:
     for key in keys:
+        previous_size = serial_log.stat().st_size
         sequence = key.split("-")
         for down, codes in ((True, sequence), (False, reversed(sequence))):
             qmp_execute(
@@ -265,8 +267,13 @@ def send_keyboard_keys(stream, keys: tuple[str, ...]) -> None:
             )
         # Explicit key-up avoids a QEMU virtual-time hold crossing the next
         # press when TCG runs much slower than host time.
-        # A short host delay also lets the guest recycle VirtIO descriptors;
-        # QEMU can drop an entire burst once its event queue fills.
+        # Wait for the guest's echo so the next key cannot outrun descriptor
+        # recycling on a slow emulated CPU. Caps Lock has no direct echo.
+        if key != "caps_lock":
+            while serial_log.stat().st_size <= previous_size:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(f"VirtIO keyboard stopped responding after {key}")
+                time.sleep(0.01)
         time.sleep(0.1)
 
 
@@ -307,7 +314,7 @@ def connect_serial(serial_path: Path, process: subprocess.Popen, deadline: float
 def send_serial_input(connection: socket.socket, payload: bytes) -> None:
     if payload == OVERFLOW_INPUT:
         # A sleeping EL0 reader drains the small PL011 FIFO at scheduler-tick
-        # cadence. Pace the boundary probe so it remains a line-limit test.
+        # cadence. Pace each byte so this remains a line-limit test.
         for byte in payload:
             connection.sendall(bytes((byte,)))
             time.sleep(0.08)
@@ -414,6 +421,8 @@ def main() -> int:
                             send_keyboard_keys(
                                 keyboard_stream,
                                 keyboard_steps[keyboard_step][1],
+                                serial_log,
+                                deadline,
                             )
                             keyboard_step += 1
                         except (OSError, ValueError, RuntimeError) as error:
