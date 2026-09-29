@@ -1,6 +1,7 @@
 //! EPROCESS — Executive Process structure.
 
 use crate::arch::mmu::UserAddressSpace;
+use crate::executive::ke::spinlock::IrqState;
 use crate::executive::ob::handle::{
     Handle, HandleAccess, HandleObject, HandleTable, HANDLE_ACCESS_TERMINATE, HANDLE_ACCESS_WAIT,
 };
@@ -37,6 +38,17 @@ pub struct EProcess {
 }
 
 impl EProcess {
+    fn with_completion<R>(&self, operation: impl FnOnce(&mut ProcessCompletion) -> R) -> R {
+        // Console input IRQs inspect process liveness. Do not let one interrupt
+        // a holder of this lock and spin on the same single-core owner.
+        let irq_state = IrqState::disable();
+        let mut completion = self.completion.lock();
+        let result = operation(&mut completion);
+        drop(completion);
+        irq_state.restore();
+        result
+    }
+
     pub fn new_kernel_process() -> Arc<Self> {
         Arc::new(EProcess {
             object_header: ObjectHeader::new(&OB_TYPE_PROCESS, core::mem::size_of::<Self>()),
@@ -112,76 +124,75 @@ impl EProcess {
 
     /// Register an execution record before it becomes schedulable.
     pub fn register_thread(&self) {
-        let mut completion = self.completion.lock();
-        assert!(
-            completion.exit_status.is_none() && !completion.termination_requested,
-            "cannot create a thread in an exited process"
-        );
-        completion.active_threads += 1;
+        self.with_completion(|completion| {
+            assert!(
+                completion.exit_status.is_none() && !completion.termination_requested,
+                "cannot create a thread in an exited process"
+            );
+            completion.active_threads += 1;
+        });
     }
 
     /// Record one thread's exit and wake process waiters when it was the last
     /// active execution record.
     pub fn thread_exited(&self, status: i32) -> Vec<usize> {
-        let mut completion = self.completion.lock();
-        assert!(
-            completion.active_threads > 0,
-            "process thread accounting underflow"
-        );
-        completion.active_threads -= 1;
-        if completion.active_threads != 0 || completion.exit_status.is_some() {
-            return Vec::new();
-        }
+        self.with_completion(|completion| {
+            assert!(
+                completion.active_threads > 0,
+                "process thread accounting underflow"
+            );
+            completion.active_threads -= 1;
+            if completion.active_threads != 0 || completion.exit_status.is_some() {
+                return Vec::new();
+            }
 
-        completion.exit_status = Some(status);
-        completion.waiters.drain(..).collect()
+            completion.exit_status = Some(status);
+            completion.waiters.drain(..).collect()
+        })
     }
 
     /// Return a final process status, or register a scheduler thread that
     /// must be woken when the last active thread exits.
     pub fn observe_or_register_waiter(&self, waiter: usize) -> Option<i32> {
-        let mut completion = self.completion.lock();
-        match completion.exit_status {
+        self.with_completion(|completion| match completion.exit_status {
             Some(status) => Some(status),
             None => {
                 completion.waiters.push_back(waiter);
                 None
             }
-        }
+        })
     }
 
     /// Read completion without registering a scheduler waiter.
     pub fn exit_status(&self) -> Option<i32> {
-        self.completion.lock().exit_status
+        self.with_completion(|completion| completion.exit_status)
     }
 
     /// Remove a timed-out scheduler thread before its next wait can begin.
     pub fn cancel_waiter(&self, waiter: usize) {
-        self.completion
-            .lock()
-            .waiters
-            .retain(|entry| *entry != waiter);
+        self.with_completion(|completion| completion.waiters.retain(|entry| *entry != waiter));
     }
 
     /// Prevent future threads from joining this process while the scheduler
     /// removes its existing execution records for external termination.
     pub fn begin_termination(&self) -> Result<(), ProcessTerminationState> {
-        let mut completion = self.completion.lock();
-        if completion.exit_status.is_some() {
-            return Err(ProcessTerminationState::Exited);
-        }
-        if completion.termination_requested {
-            return Err(ProcessTerminationState::Terminating);
-        }
-        completion.termination_requested = true;
-        Ok(())
+        self.with_completion(|completion| {
+            if completion.exit_status.is_some() {
+                return Err(ProcessTerminationState::Exited);
+            }
+            if completion.termination_requested {
+                return Err(ProcessTerminationState::Terminating);
+            }
+            completion.termination_requested = true;
+            Ok(())
+        })
     }
 
     /// Undo a termination request that could not find any scheduler-owned
     /// thread records. This is defensive; it should be unreachable on the
     /// single-core scheduler.
     pub fn cancel_termination(&self) {
-        self.completion.lock().termination_requested = false;
+        self.with_completion(|completion| completion.termination_requested = false);
     }
 }
 
