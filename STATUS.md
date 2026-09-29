@@ -2,12 +2,13 @@
 
 **Project:** CantayaOS by CantayaTech
 **Target:** AArch64, UEFI, QEMU `virt` with OVMF
-**Last verified:** 2026-09-28
+**Last verified:** 2026-09-29
 
 ## Current Milestone
 
-**Objective:** Let the controlled EL0 terminal block on cancellable console
-input readiness while retaining bounded reads and the EL1 fallback prompt.
+**Objective:** Wake blocked EL0 console readers from PL011 RX and VirtIO
+keyboard IRQs without System-thread readiness polling, while retaining
+cancellation, bounded reads, and the EL1 fallback prompt.
 
 ## Verified Baseline For Planning
 
@@ -71,8 +72,10 @@ input readiness while retaining bounded reads and the EL1 fallback prompt.
   only the caller's claim; process exit lets the shell reclaim it.
 - `NtWaitForConsoleInput(-2)` claims the same exclusive input pseudo-handle and
   blocks the caller until PL011 or keyboard input is ready. The System thread
-  checks readiness and wakes one waiter of the live owner; keyboard events are
-  drained into a bounded decoded-byte FIFO. Closing the claim invalidates its
+  no longer polls readiness: PL011 RX and VirtIO keyboard IRQs wake one waiter
+  of the live owner. Both devices drain into bounded software input FIFOs.
+  Process-completion locking masks local IRQs so the wake path cannot
+  interrupt a lock holder on the single core. Closing the claim invalidates its
   generation and wakes blocked callers with `STATUS_INVALID_HANDLE`.
   Thread/process termination removes console wait registrations before reaping.
   The EL0 shell waits after an empty bounded read instead of spinning.
@@ -195,12 +198,11 @@ lives in [docs/architecture.md](docs/architecture.md).
 
 ## Latest Verified Milestone
 
-The interactive command loop now runs in a controlled EL0 `init.elf` mode on
-normal boots. The private smoke boot first retains the EL1 prompt for the
-input-ownership probe, then hands off to that same EL0 loop. QEMU smoke checks
-the existing editing, commands, serial, keyboard, line-bound, and lifecycle
-contracts against the EL0 loop, plus `?` and bare `echo`. A separate normal
-boot confirms the EL0 loop starts without the smoke probe.
+PL011 RX and VirtIO keyboard interrupts now wake the blocked EL0 console
+reader directly. The System thread no longer checks input readiness in its
+hot loops, and no timer recheck is needed. The private smoke boot requires
+both device IRQs and retains the serial, keyboard, line-bound, cancellation,
+and lifecycle checks; a separate normal boot still verifies interactive input.
 
 ## Latest Planning Decision
 
@@ -217,15 +219,17 @@ newer toolchain's UEFI linker regression. Console output and input are fixed
 pseudo-handle operations, not generic file I/O. The EL1 parser remains a
 fallback; smoke rejects unexpected fallback during the EL0 command checks.
 The smoke harness uses explicit QMP key down/up events and a private serial
-socket, with bounded pacing for the PL011 line-capacity probe.
+socket, with bounded pacing for the PL011 line-capacity probe. A QEMU stall
+diagnostic exposed a single-core IRQ re-entry into the process-completion
+mutex; completion access now masks local IRQs.
 
 ## Recommended Next Milestone
 
-Replace System-thread console readiness polling with PL011 RX and VirtIO input
-interrupt-driven wakeups. Preserve the exclusive `-2` claim, generation-based
-close cancellation, bounded `NtReadFile`, blocked-thread/process termination
-cleanup, EL1 fallback, and both QEMU smoke boots. Do not expand image selectors
-or introduce generic device/file handles.
+Exercise EL1 fallback in a private smoke-only boot after deliberately ending
+the EL0 shell. Verify that the fallback reclaims serial and keyboard input,
+can run a built-in command, and does not alter the ordinary boot or exclusive
+`-2` ownership contract. Keep fault injection out of normal boots and do not
+expand image selectors or generic device/file handles.
 
 ### Follow-On Candidates
 

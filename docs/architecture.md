@@ -85,8 +85,8 @@ PL011 UART.
 The recurring System heartbeat and Thread-A/B demonstration loops are disabled.
 
 QEMU attaches a modern VirtIO-MMIO keyboard. The driver scans the MMIO slots,
-negotiates VirtIO 1, checks the advertised key bitmap, and polls its event
-queue for the current console owner. It decodes US ASCII keys plus Shift, Caps Lock,
+negotiates VirtIO 1, checks the advertised key bitmap, and drains its event
+queue on input IRQs. It decodes US ASCII keys plus Shift, Caps Lock,
 Backspace, Enter, Ctrl-U, and Ctrl-L. The status queue is present, but keyboard
 LED feedback is not implemented. PL011 serial input remains available through
 `-serial stdio`. The terminal runs only its built-in commands, not arbitrary
@@ -104,9 +104,10 @@ Other processes are denied until the owner calls `NtClose(-2)` or exits. The
 EL1 fallback parser does not consume input while a live EL0 owner holds that
 claim.
 `NtWaitForConsoleInput(-2)` blocks a thread on the live owner's claim without
-consuming a byte. The System thread checks PL011 and a bounded decoded-key
-FIFO, waking one registered reader when input is ready. A close advances the
-claim generation and wakes old waiters with `STATUS_INVALID_HANDLE`; external
+consuming a byte. PL011 RX and VirtIO keyboard IRQs queue input and wake one
+registered reader when data is ready. The System thread no longer polls
+readiness in its hot loops. A close advances the claim generation and wakes
+old waiters with `STATUS_INVALID_HANDLE`; external
 thread or process termination cancels the registration before reaping. The EL0
 shell uses this wait after an empty nonblocking `NtReadFile`, while the EL1
 fallback remains available if the shell exits.

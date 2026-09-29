@@ -10,9 +10,9 @@ next, read [STATUS.md](../STATUS.md).
   boot validation processes exit. It accepts printable ASCII, Enter,
   Backspace, Ctrl-U, and Ctrl-L from PL011 serial or QEMU's VirtIO-MMIO
   keyboard, then handles `help`, `info`, `uptime`, `mem`, `echo`, and `clear`
-  without a user-mode file or process interface. The keyboard driver polls
-  its event queue, decodes a US ASCII key map with Shift and Caps Lock, and
-  leaves LED feedback unimplemented. `make smoke` now injects `help` through a
+  without a user-mode file or process interface. The keyboard driver drains
+  its event queue on IRQs, decodes a US ASCII key map with Shift and Caps Lock,
+  and leaves LED feedback unimplemented. `make smoke` now injects `help` through a
   private QMP monitor and requires its terminal response. The same smoke run
   verifies Ctrl-U clears unfinished text and Backspace corrects an `echo`
   command before submission. The smoke run also sends `echo serialprobe`
@@ -254,9 +254,10 @@ next, read [STATUS.md](../STATUS.md).
   PL011 or VirtIO-keyboard bytes and the count. `NtClose(-2)` releases only the
   owner's claim; a completed owner is reclaimed by the next shell read.
 - `NtWaitForConsoleInput(-2)` registers a cancellable scheduler wait on the
-  exclusive input claim. The System thread probes PL011 and decoded VirtIO
-  bytes, waking one waiter without consuming data. `NtClose(-2)` invalidates
-  the claim generation; external termination removes the registration before
+  exclusive input claim. PL011 RX and VirtIO input IRQs wake one waiter
+  without consuming data. The System thread does not probe readiness in its
+  hot loops. `NtClose(-2)` invalidates the claim generation; external
+  termination removes the registration before
   the raw thread can be reaped. The EL0 shell sleeps after an empty read.
   The smoke probe blocks on serial and keyboard readiness and externally
   terminates a child blocked in this wait, then reclaims input successfully.
@@ -402,6 +403,16 @@ A paced PL011 probe fills the 128-byte input line, checks eight consecutive
 overflow bells, rejects the excess `boguscmd` suffix, and runs the accepted
 `echo` payload. The next `echo boundok` succeeds. All earlier keyboard,
 serial, and two-round lifecycle assertions remain required.
+
+PL011 RX and VirtIO keyboard IRQs now wake the blocked console reader without
+System-thread readiness polling or a timer fallback. A bounded PL011 software
+FIFO and the decoded-key FIFO retain input until `NtReadFile` consumes it.
+The private smoke boot requires both IRQ counters after its serial/keyboard
+wait probe, then retains the full command, cancellation, and lifecycle
+contract; the separate normal boot also passes. A QEMU hang during development
+was traced to an IRQ checking process liveness while the interrupted code held
+the process-completion mutex. Completion operations now mask local IRQs while
+holding that mutex.
 
 This validates the QEMU `virt`/TCG path. It is not hardware certification or
 evidence of Windows application compatibility.
