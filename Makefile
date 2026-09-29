@@ -36,7 +36,7 @@ DISK_IMG_NEW := $(DISK_IMG).new
 ESP_DIR    := $(BUILD_DIR)/esp
 
 QEMU       := qemu-system-aarch64
-SMOKE_TIMEOUT ?= 35
+SMOKE_TIMEOUT ?= 120
 QEMU_FLAGS := \
   -name CantayaOS \
   -machine virt,highmem=on \

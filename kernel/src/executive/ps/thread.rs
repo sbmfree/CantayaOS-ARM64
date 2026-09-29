@@ -33,6 +33,10 @@ struct ThreadCompletion {
 pub enum WaitTarget {
     Process(Arc<EProcess>),
     Thread(Arc<ThreadObject>),
+    ConsoleInput {
+        process: Arc<EProcess>,
+        generation: u64,
+    },
 }
 
 impl WaitTarget {
@@ -40,6 +44,10 @@ impl WaitTarget {
         match self {
             Self::Process(process) => process.observe_or_register_waiter(waiter),
             Self::Thread(thread) => thread.observe_or_register_waiter(waiter),
+            Self::ConsoleInput {
+                process,
+                generation,
+            } => crate::console::observe_or_register_waiter(process, *generation, waiter),
         }
     }
 
@@ -47,6 +55,7 @@ impl WaitTarget {
         match self {
             Self::Process(process) => process.cancel_waiter(waiter),
             Self::Thread(thread) => thread.cancel_waiter(waiter),
+            Self::ConsoleInput { .. } => crate::console::cancel_waiter(waiter),
         }
     }
 }

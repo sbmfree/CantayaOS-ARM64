@@ -32,6 +32,7 @@ pub enum NtSyscallNumber {
     NtReadFile = 0x0006,
     NtWriteFile = 0x0008,
     NtClearConsole = 0x0037,
+    NtWaitForConsoleInput = 0x0038,
     NtAllocateVirtual = 0x0015,
     NtFreeVirtual = 0x001B,
     NtQuerySystemInfo = 0x0036,
@@ -51,6 +52,7 @@ impl NtSyscallNumber {
             0x0006 => Self::NtReadFile,
             0x0008 => Self::NtWriteFile,
             0x0037 => Self::NtClearConsole,
+            0x0038 => Self::NtWaitForConsoleInput,
             0x0015 => Self::NtAllocateVirtual,
             0x001B => Self::NtFreeVirtual,
             0x0036 => Self::NtQuerySystemInfo,
@@ -180,6 +182,23 @@ pub fn sys_read_file(regs: &mut SavedRegs) -> u64 {
     match result {
         Some(Ok(status)) | Some(Err(status)) => status,
         None => STATUS_ACCESS_VIOLATION,
+    }
+}
+
+pub fn sys_wait_for_console_input(regs: &mut SavedRegs) -> u64 {
+    if regs.x[0] != crate::console::INPUT_HANDLE {
+        return STATUS_INVALID_HANDLE;
+    }
+    let Some(process) = crate::executive::ps::scheduler::current_process() else {
+        return STATUS_INVALID_HANDLE;
+    };
+    let generation = match crate::console::claim_input(&process) {
+        Ok(generation) => generation,
+        Err(_) => return STATUS_ACCESS_DENIED,
+    };
+    match crate::executive::ps::scheduler::wait_for_console_input(process, generation) {
+        Ok(status) => status as u32 as u64,
+        Err(_) => STATUS_INVALID_HANDLE,
     }
 }
 

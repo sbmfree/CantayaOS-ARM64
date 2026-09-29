@@ -86,6 +86,12 @@ pub fn try_read_byte() -> Option<u8> {
     }
 }
 
+/// Check receive readiness without consuming the next PL011 byte.
+#[inline]
+pub fn has_input() -> bool {
+    unsafe { mmio_read(FR) & FR_RXFE == 0 }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // `core::fmt::Write` implementation
 // ─────────────────────────────────────────────────────────────────────────────

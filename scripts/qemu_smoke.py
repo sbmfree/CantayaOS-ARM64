@@ -11,6 +11,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -127,6 +128,9 @@ REQUIRED_MARKERS = (
     CONSOLE_INPUT_READY,
     CONSOLE_INPUT_ISOLATED,
     CONSOLE_KEYBOARD_READY,
+    "[user-init] EL0 console wait cancellation armed",
+    "[user-init] EL0 console wait cancellation validated",
+    "Ps: external process termination cleared 1 console input wait registration(s)",
     CONSOLE_INPUT_VALIDATED,
     USER_SHELL_READY,
     KEYBOARD_HELP_RESPONSE,
@@ -222,44 +226,93 @@ def qmp_execute(stream, command: dict[str, object]) -> None:
             return
 
 
-def send_keyboard_keys(monitor_path: Path, keys: tuple[str, ...]) -> None:
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as monitor:
-        monitor.settimeout(2)
-        monitor.connect(str(monitor_path))
-        with monitor.makefile("rwb") as stream:
-            line = stream.readline()
-            if not line:
-                raise RuntimeError("QMP connection closed before its greeting")
-            greeting = json.loads(line)
-            if "QMP" not in greeting:
-                raise RuntimeError("QMP greeting was missing")
-            qmp_execute(stream, {"execute": "qmp_capabilities"})
-            for key in keys:
-                qmp_execute(
-                    stream,
-                    {
-                        "execute": "human-monitor-command",
-                        "arguments": {"command-line": f"sendkey {key} 20"},
+def connect_keyboard_monitor(monitor_path: Path):
+    monitor = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    monitor.settimeout(2)
+    monitor.connect(str(monitor_path))
+    stream = monitor.makefile("rwb")
+    line = stream.readline()
+    if not line:
+        raise RuntimeError("QMP connection closed before its greeting")
+    greeting = json.loads(line)
+    if "QMP" not in greeting:
+        raise RuntimeError("QMP greeting was missing")
+    qmp_execute(stream, {"execute": "qmp_capabilities"})
+    return monitor, stream
+
+
+def send_keyboard_keys(stream, keys: tuple[str, ...]) -> None:
+    for key in keys:
+        sequence = key.split("-")
+        for down, codes in ((True, sequence), (False, reversed(sequence))):
+            qmp_execute(
+                stream,
+                {
+                    "execute": "input-send-event",
+                    "arguments": {
+                        "events": [
+                            {
+                                "type": "key",
+                                "data": {
+                                    "down": down,
+                                    "key": {"type": "qcode", "data": code},
+                                },
+                            }
+                            for code in codes
+                        ]
                     },
-                )
-                time.sleep(0.05)
+                },
+            )
+        # Explicit key-up avoids a QEMU virtual-time hold crossing the next
+        # press when TCG runs much slower than host time.
+        # A short host delay also lets the guest recycle VirtIO descriptors;
+        # QEMU can drop an entire burst once its event queue fills.
+        time.sleep(0.1)
 
 
 def response_seen(trigger: str | re.Pattern[str], output: str) -> bool:
     return trigger in output if isinstance(trigger, str) else trigger.search(output) is not None
 
 
-def send_serial_input(stream, payload: bytes) -> None:
+def capture_serial(connection: socket.socket, serial_log: Path, stop: threading.Event) -> None:
+    connection.settimeout(0.2)
+    with serial_log.open("wb") as output:
+        while not stop.is_set():
+            try:
+                chunk = connection.recv(4096)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            if not chunk:
+                break
+            output.write(chunk)
+            output.flush()
+
+
+def connect_serial(serial_path: Path, process: subprocess.Popen, deadline: float) -> socket.socket:
+    while time.monotonic() < deadline:
+        connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            connection.connect(str(serial_path))
+            return connection
+        except OSError:
+            connection.close()
+            if process.poll() is not None:
+                raise RuntimeError("QEMU exited before opening its serial socket")
+            time.sleep(0.01)
+    raise RuntimeError("QEMU serial socket did not become ready")
+
+
+def send_serial_input(connection: socket.socket, payload: bytes) -> None:
     if payload == OVERFLOW_INPUT:
-        # QEMU's PL011 FIFO is small. Pace the boundary probe so it measures
-        # the shell's line limit instead of dropped UART input bytes.
-        for offset in range(0, len(payload), 4):
-            stream.write(payload[offset : offset + 4])
-            stream.flush()
-            time.sleep(0.05)
+        # A sleeping EL0 reader drains the small PL011 FIFO at scheduler-tick
+        # cadence. Pace the boundary probe so it remains a line-limit test.
+        for byte in payload:
+            connection.sendall(bytes((byte,)))
+            time.sleep(0.08)
     else:
-        stream.write(payload)
-        stream.flush()
+        connection.sendall(payload)
 
 
 def main() -> int:
@@ -268,7 +321,7 @@ def main() -> int:
     parser.add_argument("--ovmf", type=Path, required=True)
     parser.add_argument("--ovmf-vars", type=Path, required=True)
     parser.add_argument("--image", type=Path, required=True)
-    parser.add_argument("--timeout", type=float, default=35.0)
+    parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--normal-boot", action="store_true")
     args = parser.parse_args()
 
@@ -287,6 +340,7 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="cantaya-smoke-") as directory:
         serial_log = Path(directory) / "serial.log"
+        serial_path = Path(directory) / "serial.sock"
         monitor_path = Path(directory) / "qmp.sock"
         # A visible `make run` may have these writable images open already.
         # Give this headless guest private copies so the smoke test can boot.
@@ -316,24 +370,32 @@ def main() -> int:
             "-drive", f"if=none,format=raw,file={image_copy},id=cantaya-disk",
             "-global", "virtio-mmio.force-legacy=false",
             "-device", "virtio-blk-device,drive=cantaya-disk",
-            "-serial", "stdio",
+            "-chardev", f"socket,path={serial_path},id=serial0,server=on,wait=on",
+            "-serial", "chardev:serial0",
             "-qmp", f"unix:{monitor_path},server=on,wait=off",
             "-display", "none",
             "-no-reboot",
         ]
-        # QEMU's PL011 stdio backend reads the pipe while its output still
-        # lands in the same file used by the marker contract.
-        with serial_log.open("wb") as serial_output:
-            process = subprocess.Popen(
-                command, stdin=subprocess.PIPE, stdout=serial_output
-            )
+        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+        serial_connection = None
+        serial_stop = threading.Event()
+        serial_reader = None
         output = ""
         keyboard_step = 0
         serial_step = 0
         input_error = None
+        keyboard_monitor = None
+        keyboard_stream = None
         deadline = time.monotonic() + args.timeout
 
         try:
+            serial_connection = connect_serial(serial_path, process, deadline)
+            serial_reader = threading.Thread(
+                target=capture_serial,
+                args=(serial_connection, serial_log, serial_stop),
+                daemon=True,
+            )
+            serial_reader.start()
             while time.monotonic() < deadline:
                 if serial_log.exists():
                     output = serial_log.read_text(errors="replace")
@@ -345,8 +407,13 @@ def main() -> int:
                         keyboard_steps[keyboard_step][0] in output
                     ):
                         try:
+                            if keyboard_stream is None:
+                                keyboard_monitor, keyboard_stream = connect_keyboard_monitor(
+                                    monitor_path
+                                )
                             send_keyboard_keys(
-                                monitor_path, keyboard_steps[keyboard_step][1]
+                                keyboard_stream,
+                                keyboard_steps[keyboard_step][1],
                             )
                             keyboard_step += 1
                         except (OSError, ValueError, RuntimeError) as error:
@@ -356,11 +423,7 @@ def main() -> int:
                         serial_steps[serial_step][0], output
                     ):
                         try:
-                            if process.stdin is None:
-                                raise RuntimeError("PL011 input pipe is unavailable")
-                            send_serial_input(
-                                process.stdin, serial_steps[serial_step][1]
-                            )
+                            send_serial_input(serial_connection, serial_steps[serial_step][1])
                             serial_step += 1
                         except (OSError, RuntimeError) as error:
                             input_error = str(error)
@@ -377,8 +440,10 @@ def main() -> int:
                     break
                 time.sleep(0.1)
         finally:
-            if process.stdin is not None:
-                process.stdin.close()
+            if keyboard_stream is not None:
+                keyboard_stream.close()
+            if keyboard_monitor is not None:
+                keyboard_monitor.close()
             if process.poll() is None:
                 process.terminate()
                 try:
@@ -386,6 +451,11 @@ def main() -> int:
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
+            serial_stop.set()
+            if serial_connection is not None:
+                serial_connection.close()
+            if serial_reader is not None:
+                serial_reader.join(timeout=2)
 
         if serial_log.exists():
             output = serial_log.read_text(errors="replace")

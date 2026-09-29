@@ -355,6 +355,19 @@ fn wait_for_completion(
     }
 }
 
+/// Sleep until the caller's owned console has input or its claim is cancelled.
+pub fn wait_for_console_input(process: Arc<EProcess>, generation: u64) -> Result<i32, WaitError> {
+    let current = current_thread().ok_or(WaitError::NoCurrentThread)?;
+    let target = WaitTarget::ConsoleInput {
+        process,
+        generation,
+    };
+    match wait_for_completion(current, None, target) {
+        WaitOutcome::Signaled(status) => Ok(status),
+        WaitOutcome::TimedOut => unreachable!("console input wait has no timeout"),
+    }
+}
+
 /// Wait for a typed process or thread handle owned by the active process.
 /// Returns the target's exit status after it is signaled.
 pub fn wait_for_handle(handle: Handle) -> Result<i32, WaitError> {
@@ -483,7 +496,21 @@ pub fn terminate_process(target: Arc<EProcess>, status: i32) -> Result<(), Termi
     let pid = target.pid.0;
     let cleared_wait_registrations = target_threads
         .iter()
-        .filter(|thread_ptr| unsafe { (*from_tp(**thread_ptr)).wait_target.is_some() })
+        .filter(|thread_ptr| unsafe {
+            matches!(
+                (*from_tp(**thread_ptr)).wait_target.as_ref(),
+                Some(WaitTarget::Process(_) | WaitTarget::Thread(_))
+            )
+        })
+        .count();
+    let cleared_console_waits = target_threads
+        .iter()
+        .filter(|thread_ptr| unsafe {
+            matches!(
+                (*from_tp(**thread_ptr)).wait_target.as_ref(),
+                Some(WaitTarget::ConsoleInput { .. })
+            )
+        })
         .count();
     for thread_ptr in &target_threads {
         finish_timed_wait(from_tp(*thread_ptr));
@@ -508,6 +535,12 @@ pub fn terminate_process(target: Arc<EProcess>, status: i32) -> Result<(), Termi
         log::info!(
             "Ps: external process termination cleared {} typed wait registration(s)",
             cleared_wait_registrations,
+        );
+    }
+    if cleared_console_waits != 0 {
+        log::info!(
+            "Ps: external process termination cleared {} console input wait registration(s)",
+            cleared_console_waits,
         );
     }
     Ok(())
@@ -909,6 +942,7 @@ fn system_thread_main() {
         enqueue(probe_thread);
         while probe_process.exit_status().is_none() {
             fallback.poll();
+            crate::console::wake_ready_waiter();
             yield_now();
         }
         drop(probe_process);
@@ -919,6 +953,7 @@ fn system_thread_main() {
         Ok((shell_process, shell_thread)) => {
             enqueue(shell_thread);
             while shell_process.exit_status().is_none() {
+                crate::console::wake_ready_waiter();
                 yield_now();
             }
             log::warn!("Ps: EL0 shell exited; restoring EL1 fallback prompt");

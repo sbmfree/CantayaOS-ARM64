@@ -62,6 +62,18 @@ fn read_one() -> Result<Option<u8>, ()> {
     }
 }
 
+fn wait_for_input() -> Result<(), ()> {
+    let status: u64;
+    unsafe {
+        asm!(
+            "svc #0",
+            inlateout("x0") (u64::MAX - 1) => status,
+            in("x8") 0x38_u64,
+        );
+    }
+    (status == 0).then_some(()).ok_or(())
+}
+
 fn clear() -> Result<(), ()> {
     let status: u64;
     unsafe {
@@ -233,7 +245,11 @@ pub extern "C" fn el0_shell_main(_stack_top: u64, _mode: u64) -> ! {
                     exit(3);
                 }
             }
-            Ok(None) => core::hint::spin_loop(),
+            Ok(None) => {
+                if wait_for_input().is_err() {
+                    exit(4);
+                }
+            }
             Err(()) => exit(4),
         }
     }

@@ -29,13 +29,14 @@ pub struct SavedRegs {
 pub extern "C" fn syscall_dispatch(syscall_num: u64, regs: *mut SavedRegs) {
     let regs = unsafe { &mut *regs };
     let number = NtSyscallNumber::from_u64(syscall_num);
-    // A nonblocking console reader may poll repeatedly while waiting for a
-    // keystroke; tracing every empty read would flood the serial console.
+    // Console reads, waits, and writes are hot terminal paths; tracing each
+    // one would flood the serial console and perturb input pacing.
     if !matches!(
         number,
         NtSyscallNumber::NtReadFile
             | NtSyscallNumber::NtWriteFile
             | NtSyscallNumber::NtClearConsole
+            | NtSyscallNumber::NtWaitForConsoleInput
     ) {
         log::trace!("SVC: {:?} (num={:#x})", number, syscall_num);
     }
@@ -43,6 +44,7 @@ pub extern "C" fn syscall_dispatch(syscall_num: u64, regs: *mut SavedRegs) {
     let result: u64 = match number {
         NtSyscallNumber::NtWriteFile => nt::sys_write_file(regs),
         NtSyscallNumber::NtReadFile => nt::sys_read_file(regs),
+        NtSyscallNumber::NtWaitForConsoleInput => nt::sys_wait_for_console_input(regs),
         NtSyscallNumber::NtClearConsole => nt::sys_clear_console(regs),
         NtSyscallNumber::NtCreateProcess => nt::sys_create_process(regs),
         NtSyscallNumber::NtCreateThread => nt::sys_create_thread(regs),

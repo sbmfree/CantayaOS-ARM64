@@ -30,6 +30,9 @@ _start:
     mov x9, #0x7b
     cmp x1, x9
     b.eq el0_shell_main
+    mov x9, #0x7c
+    cmp x1, x9
+    b.eq console_input_blocked_entry
     // Initial processes start with x1=0. Any other controlled value here is
     // an opaque parent-owned handle to probe from this empty child table.
     cbnz x1, handle_isolation_probe_entry
@@ -2711,6 +2714,12 @@ console_input_probe_entry:
     cmp x0, x19
     b.ne console_input_probe_failed
 
+    movn x0, #0
+    mov x8, #0x38
+    svc #0
+    cmp x0, x19
+    b.ne console_input_probe_failed
+
     movn x0, #1
     mov x8, #0xf
     svc #0
@@ -2842,6 +2851,10 @@ console_input_probe_entry:
 
 console_input_probe_poll:
     movn x0, #1
+    mov x8, #0x38
+    svc #0
+    cbnz x0, console_input_probe_failed
+    movn x0, #1
     add x1, sp, #16
     mov x2, #1
     add x3, sp, #8
@@ -2870,6 +2883,10 @@ console_input_probe_received:
 
 console_keyboard_probe_poll:
     movn x0, #1
+    mov x8, #0x38
+    svc #0
+    cbnz x0, console_input_probe_failed
+    movn x0, #1
     add x1, sp, #16
     mov x2, #1
     add x3, sp, #8
@@ -2897,6 +2914,56 @@ console_keyboard_probe_received:
     svc #0
     cmp x0, x19
     b.ne console_input_probe_failed
+
+    // A separate process claims the released console and blocks in its
+    // readiness wait. External termination must cancel that registration so
+    // this process can reclaim the input pseudo-handle afterward.
+    str xzr, [sp, #24]
+    add x0, sp, #24
+    mov x1, xzr
+    mov x2, #0x7c
+    mov x8, #0x4c
+    svc #0
+    cbnz x0, console_input_probe_failed
+    ldr x23, [sp, #24]
+    cbz x23, console_input_probe_failed
+    mov x9, #10
+    str x9, [sp]
+    mov x0, x23
+    mov x1, xzr
+    mov x2, sp
+    mov x3, xzr
+    mov x8, #0x4
+    svc #0
+    cmp x0, x22
+    b.ne console_input_probe_failed
+    mov x0, x23
+    mov x1, #0x47
+    mov x8, #0x29
+    svc #0
+    cbnz x0, console_input_probe_failed
+    str wzr, [sp]
+    mov x0, x23
+    mov x1, xzr
+    mov x2, xzr
+    mov x3, sp
+    mov x8, #0x4
+    svc #0
+    cbnz x0, console_input_probe_failed
+    ldr w9, [sp]
+    cmp w9, #0x47
+    b.ne console_input_probe_failed
+    mov x0, x23
+    mov x8, #0xf
+    svc #0
+    cbnz x0, console_input_probe_failed
+    movn x0, #0
+    adr x1, console_wait_cancelled_message
+    adr x2, console_wait_cancelled_message_end
+    sub x2, x2, x1
+    mov x8, #0x8
+    svc #0
+    cbnz x0, console_input_probe_failed
 
     // Claim once more, then exit without closing. The System shell must
     // reclaim input from a completed owner before processing the next key.
@@ -2950,6 +3017,11 @@ console_input_conflict_entry:
     cmp x0, x19
     b.ne console_input_probe_failed
     movn x0, #1
+    mov x8, #0x38
+    svc #0
+    cmp x0, x19
+    b.ne console_input_probe_failed
+    movn x0, #1
     mov x8, #0xf
     svc #0
     cmp x0, x20
@@ -2971,6 +3043,29 @@ console_input_conflict_entry:
     movn x0, #0
     mov x1, #0x46
     mov x8, #0x29
+    svc #0
+    b console_input_probe_failed
+
+console_input_blocked_entry:
+    sub sp, sp, #16
+    movn x0, #1
+    add x1, sp, #8
+    mov x2, #1
+    mov x3, sp
+    mov x8, #0x6
+    svc #0
+    mov x9, #0x102
+    cmp x0, x9
+    b.ne console_input_probe_failed
+    movn x0, #0
+    adr x1, console_wait_armed_message
+    adr x2, console_wait_armed_message_end
+    sub x2, x2, x1
+    mov x8, #0x8
+    svc #0
+    cbnz x0, console_input_probe_failed
+    movn x0, #1
+    mov x8, #0x38
     svc #0
     b console_input_probe_failed
 
@@ -3206,6 +3301,12 @@ console_keyboard_ready_message_end:
 console_input_validated_message:
     .ascii "[user-init] EL0 console input validated\n"
 console_input_validated_message_end:
+console_wait_armed_message:
+    .ascii "[user-init] EL0 console wait cancellation armed\n"
+console_wait_armed_message_end:
+console_wait_cancelled_message:
+    .ascii "[user-init] EL0 console wait cancellation validated\n"
+console_wait_cancelled_message_end:
 console_input_failed_message:
     .ascii "[user-init] ERROR console input probe failed\n"
 console_input_failed_message_end:

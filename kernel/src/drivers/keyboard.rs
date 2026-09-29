@@ -42,6 +42,7 @@ const DRIVER_OK: u32 = 4;
 const FEATURES_OK: u32 = 8;
 
 const MAX_EVENTS: u16 = 64;
+const PENDING_KEYS: usize = 128;
 const DESC_WRITE: u16 = 2;
 const DESC_OFFSET: usize = 0;
 const AVAIL_OFFSET: usize = 1024;
@@ -85,6 +86,9 @@ struct VirtioKeyboard {
     left_ctrl: bool,
     right_ctrl: bool,
     caps_lock: bool,
+    pending: [u8; PENDING_KEYS],
+    pending_head: usize,
+    pending_len: usize,
 }
 
 static KEYBOARD: Mutex<Option<VirtioKeyboard>> = Mutex::new(None);
@@ -118,9 +122,24 @@ pub fn init() {
 /// Return one decoded input byte, if the event queue has a key press.
 pub fn try_read() -> Option<u8> {
     let irq_state = crate::executive::ke::spinlock::IrqState::disable();
-    let result = KEYBOARD.lock().as_mut().and_then(VirtioKeyboard::poll);
+    let result = KEYBOARD.lock().as_mut().and_then(|keyboard| {
+        keyboard.drain_pending();
+        keyboard.pop_pending()
+    });
     irq_state.restore();
     result
+}
+
+/// Drain available VirtIO events into a bounded decoded-key FIFO, then report
+/// whether an input byte can be read. Modifiers alone do not wake the shell.
+pub fn has_pending_byte() -> bool {
+    let irq_state = crate::executive::ke::spinlock::IrqState::disable();
+    let pending = KEYBOARD.lock().as_mut().is_some_and(|keyboard| {
+        keyboard.drain_pending();
+        keyboard.pending_len != 0
+    });
+    irq_state.restore();
+    pending
 }
 
 impl VirtioKeyboard {
@@ -239,7 +258,43 @@ impl VirtioKeyboard {
             left_ctrl: false,
             right_ctrl: false,
             caps_lock: false,
+            pending: [0; PENDING_KEYS],
+            pending_head: 0,
+            pending_len: 0,
         })
+    }
+
+    fn has_used_events(&self) -> bool {
+        let queue = crate::arch::mmu::phys_to_direct_map(self.queue_phys) as usize;
+        barrier::dsb(barrier::ISH);
+        let used_index =
+            unsafe { core::ptr::read_volatile((queue + USED_OFFSET + 2) as *const u16) };
+        used_index != self.last_used
+    }
+
+    fn drain_pending(&mut self) {
+        // Recycle descriptors even while EL0 is asleep. Each poll consumes up
+        // to one queue's worth of events and returns at most one decoded byte.
+        for _ in 0..self.queue_size {
+            if self.pending_len == PENDING_KEYS || !self.has_used_events() {
+                break;
+            }
+            if let Some(byte) = self.poll() {
+                let tail = (self.pending_head + self.pending_len) % PENDING_KEYS;
+                self.pending[tail] = byte;
+                self.pending_len += 1;
+            }
+        }
+    }
+
+    fn pop_pending(&mut self) -> Option<u8> {
+        if self.pending_len == 0 {
+            return None;
+        }
+        let byte = self.pending[self.pending_head];
+        self.pending_head = (self.pending_head + 1) % PENDING_KEYS;
+        self.pending_len -= 1;
+        Some(byte)
     }
 
     fn poll(&mut self) -> Option<u8> {
