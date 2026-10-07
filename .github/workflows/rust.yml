@@ -26,6 +26,8 @@ jobs:
       run: |
         cargo build --verbose -p cantaya-user-init --target user/aarch64-cantaya-user.json -Z json-target-spec -Z build-std=core,compiler_builtins -Z build-std-features=compiler-builtins-mem
         cargo build --verbose -p cantaya-user-child --target user/aarch64-cantaya-user.json -Z json-target-spec -Z build-std=core,compiler_builtins -Z build-std-features=compiler-builtins-mem
+        cargo build --verbose -p cantaya-user-hello --target user/aarch64-cantaya-user.json -Z json-target-spec -Z build-std=core,compiler_builtins -Z build-std-features=compiler-builtins-mem
+        cargo build --verbose -p cantaya-user-paint --target user/aarch64-cantaya-user.json -Z json-target-spec -Z build-std=core,compiler_builtins -Z build-std-features=compiler-builtins-mem
 
   smoke:
     runs-on: ubuntu-24.04
