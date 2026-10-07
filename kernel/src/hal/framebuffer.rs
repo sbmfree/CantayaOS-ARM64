@@ -67,7 +67,9 @@ impl Console {
         let offset = (y * self.fb.stride + x * (self.fb.bpp / 8)) as usize;
         let ptr = (self.base + offset) as *mut u32;
         let pixel = match self.fb.pixel_format {
-            PixelFormat::Rgb | PixelFormat::Bgr => color,
+            PixelFormat::Rgb => {
+                (color & 0x00FF_0000) >> 16 | (color & 0x0000_FF00) | (color & 0x0000_00FF) << 16
+            }
             _ => color,
         };
         unsafe { core::ptr::write_volatile(ptr, pixel) };
@@ -288,6 +290,9 @@ pub fn init(fb: &FramebufferInfo) -> bool {
 
 /// Write a formatted string to the framebuffer console (used by logger).
 pub fn write_fmt(args: core::fmt::Arguments) {
+    if crate::desktop::is_active() {
+        return;
+    }
     use core::fmt::Write;
     with_console(|c| {
         let _ = c.write_fmt(args);
@@ -296,7 +301,39 @@ pub fn write_fmt(args: core::fmt::Arguments) {
 
 /// Replace boot logs with the post-validation logo and lower terminal pane.
 pub fn show_shell_screen() {
+    crate::desktop::reset();
     with_console(Console::show_shell_screen);
+}
+
+pub fn display_info() -> Option<cantaya_shared::desktop::DisplayInfo> {
+    let mut result = None;
+    with_console(|c| {
+        if matches!(c.fb.pixel_format, PixelFormat::Rgb | PixelFormat::Bgr)
+            && c.fb.width <= 1024
+            && c.fb.height <= 768
+        {
+            result = Some(cantaya_shared::desktop::DisplayInfo {
+                width: c.fb.width,
+                height: c.fb.height,
+                version: 1,
+                max_blit_pixels: cantaya_shared::desktop::MAX_BLIT_PIXELS as u32,
+            });
+        }
+    });
+    result
+}
+
+/// Called only after the desktop syscall validates bounds and copies all pixels.
+pub fn blit(x: u32, y: u32, width: u32, height: u32, pixels: &[u8]) {
+    with_console(|c| {
+        for row in 0..height {
+            for col in 0..width {
+                let offset = ((row * width + col) * 4) as usize;
+                let color = u32::from_le_bytes(pixels[offset..offset + 4].try_into().unwrap());
+                c.put_pixel(x + col, y + row, color);
+            }
+        }
+    });
 }
 
 fn with_console(f: impl FnOnce(&mut Console)) {

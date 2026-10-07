@@ -7,6 +7,7 @@
 //! This module enforces the small lifecycle-rights subset needed before the
 //! broader security model exists.
 
+use crate::executive::io::root::OpenFile;
 use crate::executive::ob::types::{OB_TYPE_PROCESS, OB_TYPE_THREAD};
 use crate::executive::ps::{process::EProcess, thread::ThreadObject};
 use alloc::{sync::Arc, vec::Vec};
@@ -17,6 +18,7 @@ pub type HandleAccess = u32;
 
 pub const HANDLE_ACCESS_WAIT: HandleAccess = 1 << 0;
 pub const HANDLE_ACCESS_TERMINATE: HandleAccess = 1 << 1;
+pub const HANDLE_ACCESS_READ: HandleAccess = 1 << 2;
 
 const INVALID_HANDLE: Handle = 0;
 const PSEUDO_CURRENT_PROCESS: Handle = u64::MAX;
@@ -55,6 +57,7 @@ pub enum HandleLookupError {
 pub enum HandleObject {
     Process(Arc<EProcess>),
     Thread(Arc<ThreadObject>),
+    File(Arc<OpenFile>),
 }
 
 struct Entry {
@@ -86,6 +89,7 @@ impl HandleTable {
             HandleObject::Thread(thread) => {
                 debug_assert!(core::ptr::eq(thread.object_header.ty, &OB_TYPE_THREAD));
             }
+            HandleObject::File(_) => {}
         }
 
         for (index, slot) in self.slots.iter_mut().enumerate() {

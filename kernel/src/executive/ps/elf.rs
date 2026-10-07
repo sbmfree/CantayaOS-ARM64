@@ -24,6 +24,7 @@ const SECOND_INITIAL_USER_STACK_TOP: u64 = INITIAL_USER_STACK_TOP - 0x10_0000;
 const INITIAL_USER_STACK_PAGES: usize = 4;
 pub const INITIAL_IMAGE_SOURCE: u64 = 0;
 pub const FAT_CHILD_IMAGE_SOURCE: u64 = 1;
+pub const NAMED_FAT_IMAGE_SOURCE: u64 = 2;
 
 /// Canonical byte-for-byte copy of the UEFI-provided initialization image.
 /// `NtCreateProcess` revalidates this source for every new address space;
@@ -70,8 +71,15 @@ pub fn load_initial_processes(
     *INITIAL_USER_IMAGE.lock() = Some(bytes.to_vec());
 
     Ok([
-        create_user_process(bytes, &image, INITIAL_USER_STACK_TOP, 0, "init ELF")?,
-        create_user_process(bytes, &image, SECOND_INITIAL_USER_STACK_TOP, 0, "init ELF")?,
+        create_user_process(bytes, &image, INITIAL_USER_STACK_TOP, 0, "init ELF", None)?,
+        create_user_process(
+            bytes,
+            &image,
+            SECOND_INITIAL_USER_STACK_TOP,
+            0,
+            "init ELF",
+            None,
+        )?,
     ])
 }
 
@@ -102,6 +110,23 @@ pub fn create_process_from_source(
         INITIAL_USER_STACK_TOP,
         initial_argument,
         label,
+        None,
+    )
+}
+
+pub fn create_process_from_named_file(
+    path: &crate::executive::io::root::ParsedPath,
+    arguments: &[u8],
+) -> Result<(Arc<EProcess>, *mut EThread), LoadError> {
+    let bytes = crate::executive::io::root::read_full_path(path).ok_or(LoadError::MissingImage)?;
+    let image = parse_image(&bytes)?;
+    create_user_process(
+        &bytes,
+        &image,
+        INITIAL_USER_STACK_TOP,
+        0,
+        "FAT named ELF",
+        Some(arguments),
     )
 }
 
@@ -111,15 +136,32 @@ fn create_user_process(
     stack_top: u64,
     initial_argument: u64,
     label: &str,
+    startup_arguments: Option<&[u8]>,
 ) -> Result<(Arc<EProcess>, *mut EThread), LoadError> {
     let process = EProcess::new_user_process(image.image_base);
 
-    let stack = process
+    let (stack, initial_argument) = process
         .with_user_address_space(|address_space| {
             map_image(address_space, bytes, &image)?;
-            address_space
+            let stack = address_space
                 .map_user_stack(stack_top, INITIAL_USER_STACK_PAGES)
-                .map_err(LoadError::Mapping)
+                .map_err(LoadError::Mapping)?;
+            let argument =
+                if let Some(arguments) = startup_arguments.filter(|value| !value.is_empty()) {
+                    let base = address_space
+                        .allocate_user_region(arguments.len() + 1)
+                        .map_err(LoadError::Mapping)?;
+                    address_space
+                        .copy_to_user(base, arguments)
+                        .map_err(LoadError::Mapping)?;
+                    address_space
+                        .copy_to_user(base + arguments.len() as u64, &[0])
+                        .map_err(LoadError::Mapping)?;
+                    base
+                } else {
+                    initial_argument
+                };
+            Ok((stack, argument))
         })
         .ok_or(LoadError::MissingAddressSpace)??;
 

@@ -6,6 +6,8 @@ members = [
     "kernel",
     "user",
     "user-child",
+    "user-hello",
+    "user-paint",
 ]
 
 [workspace.package]

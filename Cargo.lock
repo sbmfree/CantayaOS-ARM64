@@ -54,8 +54,22 @@ name = "cantaya-user-child"
 version = "0.1.0"
 
 [[package]]
+name = "cantaya-user-hello"
+version = "0.1.0"
+
+[[package]]
 name = "cantaya-user-init"
 version = "0.1.0"
+dependencies = [
+ "cantaya-shared",
+]
+
+[[package]]
+name = "cantaya-user-paint"
+version = "0.1.0"
+dependencies = [
+ "cantaya-shared",
+]
 
 [[package]]
 name = "cfg-if"

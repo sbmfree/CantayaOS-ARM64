@@ -30,7 +30,14 @@ use uefi::{
 // UEFI requires a global allocator.  Use `uefi`'s built-in pool allocator.
 // Declared here; enabled by the `alloc` feature of the `uefi` crate.
 
-use cantaya_shared::{BootInfo, BOOT_FLAG_CONSOLE_INPUT_PROBE, BOOT_INFO_MAGIC};
+use cantaya_shared::{
+    BootInfo, BOOT_FLAG_CONSOLE_INPUT_PROBE, BOOT_FLAG_EL1_FALLBACK_PROBE,
+    BOOT_FLAG_STORAGE_CAPACITY_PROBE, BOOT_FLAG_STORAGE_CORRUPTION_PROBE,
+    BOOT_FLAG_STORAGE_CREATE_PROBE,
+    BOOT_FLAG_STORAGE_FAILURE_PROBE,
+    BOOT_FLAG_STORAGE_INTERRUPT_CREATE_PROBE, BOOT_FLAG_STORAGE_INTERRUPT_VERIFY_PROBE,
+    BOOT_FLAG_STORAGE_VERIFY_PROBE, BOOT_INFO_MAGIC, BOOT_STORAGE_INTERRUPT_CHECKPOINT_SHIFT,
+};
 
 mod elf;
 mod framebuffer;
@@ -89,11 +96,36 @@ fn efi_main() -> Status {
     // The smoke harness adds this file only to its private ESP copy. A normal
     // interactive boot must not launch the input probe, which waits for test
     // characters and temporarily owns both console input devices.
-    let boot_flags = if load_os_file(cstr16!("SMOKE.FLG")).is_some() {
-        BOOT_FLAG_CONSOLE_INPUT_PROBE
-    } else {
-        0
-    };
+    let mut boot_flags = 0;
+    if load_os_file(cstr16!("SMOKE.FLG")).is_some() {
+        boot_flags |= BOOT_FLAG_CONSOLE_INPUT_PROBE;
+    }
+    if load_os_file(cstr16!("FALLBACK.FLG")).is_some() {
+        boot_flags |= BOOT_FLAG_EL1_FALLBACK_PROBE;
+    }
+    if load_os_file(cstr16!("STORCRT.FLG")).is_some() {
+        boot_flags |= BOOT_FLAG_STORAGE_CREATE_PROBE;
+    }
+    if load_os_file(cstr16!("STORVRF.FLG")).is_some() {
+        boot_flags |= BOOT_FLAG_STORAGE_VERIFY_PROBE;
+    }
+    if load_os_file(cstr16!("STORFLT.FLG")).is_some() {
+        boot_flags |= BOOT_FLAG_STORAGE_FAILURE_PROBE;
+    }
+    if load_os_file(cstr16!("STORCOR.FLG")).is_some() {
+        boot_flags |= BOOT_FLAG_STORAGE_CORRUPTION_PROBE;
+    }
+    if load_os_file(cstr16!("STORCAP.FLG")).is_some() {
+        boot_flags |= BOOT_FLAG_STORAGE_CAPACITY_PROBE;
+    }
+    if let Some(checkpoint) = load_storage_checkpoint(cstr16!("STORINT.FLG")) {
+        boot_flags |= BOOT_FLAG_STORAGE_INTERRUPT_CREATE_PROBE;
+        boot_flags |= u32::from(checkpoint) << BOOT_STORAGE_INTERRUPT_CHECKPOINT_SHIFT;
+    }
+    if let Some(checkpoint) = load_storage_checkpoint(cstr16!("STORRCV.FLG")) {
+        boot_flags |= BOOT_FLAG_STORAGE_INTERRUPT_VERIFY_PROBE;
+        boot_flags |= u32::from(checkpoint) << BOOT_STORAGE_INTERRUPT_CHECKPOINT_SHIFT;
+    }
 
     // ── 3. Allocate kernel stack ─────────────────────────────────────────────
     const STACK_PAGES: usize = 16; // 64 KiB
@@ -138,6 +170,11 @@ fn efi_main() -> Status {
 /// Open `\EFI\CantayaOS\kernel.elf` and read it into a Vec.
 fn load_kernel_elf() -> Option<Vec<u8>> {
     load_os_file(cstr16!("kernel.elf"))
+}
+
+fn load_storage_checkpoint(file_name: &uefi::CStr16) -> Option<u8> {
+    let bytes = load_os_file(file_name)?;
+    (bytes.len() == 1 && (b'1'..=b'8').contains(&bytes[0])).then_some(bytes[0] - b'0')
 }
 
 /// Open a file from `\EFI\CantayaOS` and retain its exact byte contents.

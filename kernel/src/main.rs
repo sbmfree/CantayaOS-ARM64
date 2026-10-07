@@ -9,15 +9,24 @@
 
 extern crate alloc;
 
-use cantaya_shared::{BootInfo, BOOT_INFO_MAGIC};
+use cantaya_shared::{
+    BootInfo, BOOT_FLAG_STORAGE_CAPACITY_PROBE, BOOT_FLAG_STORAGE_CORRUPTION_PROBE,
+    BOOT_FLAG_STORAGE_CREATE_PROBE,
+    BOOT_FLAG_STORAGE_FAILURE_PROBE,
+    BOOT_FLAG_STORAGE_INTERRUPT_CREATE_PROBE, BOOT_FLAG_STORAGE_INTERRUPT_VERIFY_PROBE,
+    BOOT_FLAG_STORAGE_VERIFY_PROBE, BOOT_INFO_MAGIC, BOOT_STORAGE_INTERRUPT_CHECKPOINT_MASK,
+    BOOT_STORAGE_INTERRUPT_CHECKPOINT_SHIFT,
+};
 
 mod arch;
 mod console;
+mod desktop;
 mod drivers;
 mod executive;
 mod hal;
 mod shell;
 mod syscall;
+mod windows;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Global allocator — provided by mm::heap after init
@@ -129,7 +138,30 @@ pub extern "C" fn kernel_main_higher_half(boot_info_ptr: *const BootInfo) -> ! {
     executive::ob::init();
     drivers::virtio_blk::init();
     drivers::keyboard::init();
-    executive::io::init();
+    drivers::pointer::init();
+    let storage_interrupt_checkpoint = u8::try_from(
+        (boot_info.flags & BOOT_STORAGE_INTERRUPT_CHECKPOINT_MASK)
+            >> BOOT_STORAGE_INTERRUPT_CHECKPOINT_SHIFT,
+    )
+    .ok()
+    .filter(|checkpoint| (1..=8).contains(checkpoint));
+    executive::io::init(
+        boot_info.flags & BOOT_FLAG_STORAGE_CREATE_PROBE != 0,
+        boot_info.flags & BOOT_FLAG_STORAGE_VERIFY_PROBE != 0,
+        boot_info.flags & BOOT_FLAG_STORAGE_FAILURE_PROBE != 0,
+        boot_info.flags & BOOT_FLAG_STORAGE_CORRUPTION_PROBE != 0,
+        boot_info.flags & BOOT_FLAG_STORAGE_CAPACITY_PROBE != 0,
+        if boot_info.flags & BOOT_FLAG_STORAGE_INTERRUPT_CREATE_PROBE != 0 {
+            storage_interrupt_checkpoint
+        } else {
+            None
+        },
+        if boot_info.flags & BOOT_FLAG_STORAGE_INTERRUPT_VERIFY_PROBE != 0 {
+            storage_interrupt_checkpoint
+        } else {
+            None
+        },
+    );
     executive::ps::init(boot_info);
     log::info!("NT Executive initialised");
 

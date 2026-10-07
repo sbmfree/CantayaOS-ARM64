@@ -57,6 +57,9 @@ static mut IDLE_CONTEXT: super::thread::ThreadContext = super::thread::ThreadCon
     spsr: 0,
     daif: 0x40,
     sp_el0: 0,
+    simd: [0; 8],
+    fpcr: 0,
+    fpsr: 0,
 };
 
 /// Global tick counter (incremented every 100 Hz timer tick).
@@ -64,13 +67,16 @@ pub static TICK_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::Atomi
 
 static CONSOLE_INPUT_PROBE: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
+static EL1_FALLBACK_PROBE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 /// Finite waits use relative 100 Hz scheduler ticks and are capped at 10 seconds.
 pub const MAX_FINITE_WAIT_TICKS: u64 = 1_000;
 
 /// Initialise the scheduler and create the System kernel thread.
-pub fn init(console_input_probe: bool) {
+pub fn init(console_input_probe: bool, el1_fallback_probe: bool) {
     CONSOLE_INPUT_PROBE.store(console_input_probe, core::sync::atomic::Ordering::Relaxed);
+    EL1_FALLBACK_PROBE.store(el1_fallback_probe, core::sync::atomic::Ordering::Relaxed);
     let system_proc = EProcess::new_kernel_process();
     let system_thread = EThread::new_kernel(system_proc, system_thread_main, 4);
     RUN_QUEUE.lock().push_back(tp(system_thread));
@@ -368,6 +374,15 @@ pub fn wait_for_console_input(process: Arc<EProcess>, generation: u64) -> Result
     }
 }
 
+/// Sleep until application input is queued or its window is destroyed.
+pub fn wait_for_window_event(process: Arc<EProcess>, id: u64) -> Result<i32, WaitError> {
+    let current = current_thread().ok_or(WaitError::NoCurrentThread)?;
+    match wait_for_completion(current, None, WaitTarget::WindowEvent { process, id }) {
+        WaitOutcome::Signaled(status) => Ok(status),
+        WaitOutcome::TimedOut => unreachable!("window wait has no timeout"),
+    }
+}
+
 /// Wait for a typed process or thread handle owned by the active process.
 /// Returns the target's exit status after it is signaled.
 pub fn wait_for_handle(handle: Handle) -> Result<i32, WaitError> {
@@ -400,6 +415,11 @@ pub fn wait_for_handle_with_timeout(
             if Arc::ptr_eq(&owner, &target) {
                 return Err(WaitError::SelfWait);
             }
+            if timeout_ticks == Some(0) {
+                return Ok(target
+                    .exit_status()
+                    .map_or(WaitOutcome::TimedOut, WaitOutcome::Signaled));
+            }
             Ok(wait_for_completion(
                 current,
                 timeout_ticks,
@@ -410,12 +430,18 @@ pub fn wait_for_handle_with_timeout(
             if Arc::ptr_eq(&target, unsafe { &(*current).object }) {
                 return Err(WaitError::SelfWait);
             }
+            if timeout_ticks == Some(0) {
+                return Ok(target
+                    .exit_status()
+                    .map_or(WaitOutcome::TimedOut, WaitOutcome::Signaled));
+            }
             Ok(wait_for_completion(
                 current,
                 timeout_ticks,
                 WaitTarget::Thread(target),
             ))
         }
+        HandleObject::File(_) => Err(WaitError::InvalidHandle),
     }
 }
 
@@ -512,6 +538,15 @@ pub fn terminate_process(target: Arc<EProcess>, status: i32) -> Result<(), Termi
             )
         })
         .count();
+    let cleared_window_waits = target_threads
+        .iter()
+        .filter(|thread_ptr| unsafe {
+            matches!(
+                (*from_tp(**thread_ptr)).wait_target.as_ref(),
+                Some(WaitTarget::WindowEvent { .. })
+            )
+        })
+        .count();
     for thread_ptr in &target_threads {
         finish_timed_wait(from_tp(*thread_ptr));
         clear_wait_registration(from_tp(*thread_ptr));
@@ -535,6 +570,12 @@ pub fn terminate_process(target: Arc<EProcess>, status: i32) -> Result<(), Termi
         log::info!(
             "Ps: external process termination cleared {} typed wait registration(s)",
             cleared_wait_registrations,
+        );
+    }
+    if cleared_window_waits != 0 {
+        log::info!(
+            "Ps: external process termination cleared {} window input wait registration(s)",
+            cleared_window_waits
         );
     }
     if cleared_console_waits != 0 {
@@ -933,6 +974,14 @@ fn system_thread_main() {
     // Let the scheduler reap the final EL0 thread before showing the prompt.
     yield_now();
     if CONSOLE_INPUT_PROBE.load(core::sync::atomic::Ordering::Relaxed) {
+        assert!(
+            crate::drivers::fat::probe_malformed_media(
+                &crate::drivers::virtio_blk::BOOT_DISK,
+                crate::drivers::virtio_blk::MAX_BOOT_VOLUME_SECTORS,
+            ),
+            "malformed FAT media was not rejected safely"
+        );
+        log::info!("FAT: malformed media rejected safely");
         // Preserve the EL1-shell exclusion regression on the private smoke
         // disk before handing the terminal to the EL0 command loop.
         let mut fallback = crate::shell::Shell::start();
@@ -954,7 +1003,14 @@ fn system_thread_main() {
     }
 
     crate::hal::framebuffer::show_shell_screen();
-    match super::create_process_from_source(super::INITIAL_IMAGE_SOURCE, 0x7b) {
+    let shell_mode = if EL1_FALLBACK_PROBE.load(core::sync::atomic::Ordering::Relaxed) {
+        0x7d
+    } else if CONSOLE_INPUT_PROBE.load(core::sync::atomic::Ordering::Relaxed) {
+        0x7e
+    } else {
+        0x7b
+    };
+    match super::create_process_from_source(super::INITIAL_IMAGE_SOURCE, shell_mode) {
         Ok((shell_process, shell_thread)) => {
             enqueue(shell_thread);
             while shell_process.exit_status().is_none() {

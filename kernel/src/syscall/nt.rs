@@ -18,6 +18,8 @@ const STATUS_ACCESS_DENIED: u64 = 0xC000_0022;
 const STATUS_TIMEOUT: u64 = 0x0000_0102;
 const STATUS_INVALID_IMAGE_FORMAT: u64 = 0xC000_007B;
 const STATUS_NO_MEMORY: u64 = 0xC000_0017;
+const STATUS_NO_SUCH_FILE: u64 = 0xC000_000F;
+const STATUS_NO_MORE_FILES: u64 = 0x8000_0006;
 const MAX_WRITE_LENGTH: usize = 1024;
 const MAX_READ_LENGTH: usize = 128;
 const CONSOLE_OUTPUT_HANDLE: u64 = u64::MAX;
@@ -33,11 +35,28 @@ pub enum NtSyscallNumber {
     NtWriteFile = 0x0008,
     NtClearConsole = 0x0037,
     NtWaitForConsoleInput = 0x0038,
+    NtQueryRootDirectory = 0x0039,
+    NtQueryDirectory = 0x003A,
     NtAllocateVirtual = 0x0015,
     NtFreeVirtual = 0x001B,
     NtQuerySystemInfo = 0x0036,
     NtTerminateProcess = 0x0029,
     NtTerminateThread = 0x0030,
+    NtQueryDisplay = 0x0040,
+    NtPresentDisplay = 0x0041,
+    NtReadDesktopEvent = 0x0042,
+    NtReadDesktopOutput = 0x0043,
+    NtCreateWindow = 0x0044,
+    NtPresentWindow = 0x0045,
+    NtReadWindowEvent = 0x0046,
+    NtWaitWindowEvent = 0x0047,
+    NtCloseWindow = 0x0048,
+    NtEnumerateWindows = 0x0049,
+    NtCopyWindow = 0x004A,
+    NtSendWindowEvent = 0x004B,
+    NtAcknowledgeWindows = 0x0050,
+    NtResizeWindow = 0x0051,
+    NtQueryWindow = 0x0052,
     Unknown,
 }
 
@@ -53,11 +72,28 @@ impl NtSyscallNumber {
             0x0008 => Self::NtWriteFile,
             0x0037 => Self::NtClearConsole,
             0x0038 => Self::NtWaitForConsoleInput,
+            0x0039 => Self::NtQueryRootDirectory,
+            0x003A => Self::NtQueryDirectory,
             0x0015 => Self::NtAllocateVirtual,
             0x001B => Self::NtFreeVirtual,
             0x0036 => Self::NtQuerySystemInfo,
             0x0029 => Self::NtTerminateProcess,
             0x0030 => Self::NtTerminateThread,
+            0x40 => Self::NtQueryDisplay,
+            0x41 => Self::NtPresentDisplay,
+            0x42 => Self::NtReadDesktopEvent,
+            0x43 => Self::NtReadDesktopOutput,
+            0x44 => Self::NtCreateWindow,
+            0x45 => Self::NtPresentWindow,
+            0x46 => Self::NtReadWindowEvent,
+            0x47 => Self::NtWaitWindowEvent,
+            0x48 => Self::NtCloseWindow,
+            0x49 => Self::NtEnumerateWindows,
+            0x4A => Self::NtCopyWindow,
+            0x4B => Self::NtSendWindowEvent,
+            0x50 => Self::NtAcknowledgeWindows,
+            0x51 => Self::NtResizeWindow,
+            0x52 => Self::NtQueryWindow,
             _ => Self::Unknown,
         }
     }
@@ -137,7 +173,7 @@ pub fn sys_read_file(regs: &mut SavedRegs) -> u64 {
     // x2 = capacity, x3 = writable u64 count. No data returns STATUS_TIMEOUT
     // without changing either output. A valid call claims exclusive input.
     if regs.x[0] != crate::console::INPUT_HANDLE {
-        return STATUS_INVALID_HANDLE;
+        return sys_read_open_file(regs);
     }
     let Ok(capacity) = usize::try_from(regs.x[2]) else {
         return STATUS_INVALID_PARAMETER;
@@ -185,6 +221,59 @@ pub fn sys_read_file(regs: &mut SavedRegs) -> u64 {
     }
 }
 
+fn sys_read_open_file(regs: &mut SavedRegs) -> u64 {
+    use crate::executive::ob::handle::{HandleLookupError, HandleObject, HANDLE_ACCESS_READ};
+
+    let Some(process) = crate::executive::ps::scheduler::current_process() else {
+        return STATUS_INVALID_HANDLE;
+    };
+    let file = match process
+        .handle_table
+        .lock()
+        .lookup_with_access(regs.x[0], HANDLE_ACCESS_READ)
+    {
+        Ok(HandleObject::File(file)) => file,
+        Ok(_) | Err(HandleLookupError::Invalid) => return STATUS_INVALID_HANDLE,
+        Err(HandleLookupError::AccessDenied) => return STATUS_ACCESS_DENIED,
+    };
+    let Ok(capacity) = usize::try_from(regs.x[2]) else {
+        return STATUS_INVALID_PARAMETER;
+    };
+    if regs.x[1] == 0 || regs.x[3] == 0 || !(1..=MAX_READ_LENGTH).contains(&capacity) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    let irq_state = crate::executive::ke::spinlock::IrqState::disable();
+    let result = process.with_user_address_space(|address_space| {
+        if address_space
+            .validate_user_writable_range(regs.x[1], capacity)
+            .is_err()
+            || address_space
+                .validate_user_writable_range(regs.x[3], core::mem::size_of::<u64>())
+                .is_err()
+        {
+            return Err(STATUS_ACCESS_VIOLATION);
+        }
+        let mut bytes = [0u8; MAX_READ_LENGTH];
+        let count = file.read(&mut bytes[..capacity]);
+        if (count != 0
+            && address_space
+                .copy_to_user(regs.x[1], &bytes[..count])
+                .is_err())
+            || address_space
+                .copy_to_user(regs.x[3], &(count as u64).to_le_bytes())
+                .is_err()
+        {
+            return Err(STATUS_ACCESS_VIOLATION);
+        }
+        Ok(0)
+    });
+    irq_state.restore();
+    match result {
+        Some(Ok(status)) | Some(Err(status)) => status,
+        None => STATUS_ACCESS_VIOLATION,
+    }
+}
+
 pub fn sys_wait_for_console_input(regs: &mut SavedRegs) -> u64 {
     if regs.x[0] != crate::console::INPUT_HANDLE {
         return STATUS_INVALID_HANDLE;
@@ -204,13 +293,14 @@ pub fn sys_wait_for_console_input(regs: &mut SavedRegs) -> u64 {
 
 pub fn sys_create_process(regs: &mut SavedRegs) -> u64 {
     // x0 = *process_handle, x1 = image source selector, x2 = child startup
-    // argument. Sources are fixed kernel-owned images: the retained boot init
-    // ELF or bounded CHILD.ELF from the retained FAT boot volume.
+    // argument, x3/x4 = bounded path pointer/length for selector 2. For
+    // selector 2, x2/x5 are an optional printable argument pointer/length.
     if regs.x[0] == 0
         || !matches!(
             regs.x[1],
             crate::executive::ps::INITIAL_IMAGE_SOURCE
                 | crate::executive::ps::FAT_CHILD_IMAGE_SOURCE
+                | crate::executive::ps::NAMED_FAT_IMAGE_SOURCE
         )
     {
         return STATUS_INVALID_PARAMETER;
@@ -218,6 +308,7 @@ pub fn sys_create_process(regs: &mut SavedRegs) -> u64 {
     let source_name = match regs.x[1] {
         crate::executive::ps::INITIAL_IMAGE_SOURCE => "cached init ELF",
         crate::executive::ps::FAT_CHILD_IMAGE_SOURCE => "FAT CHILD.ELF",
+        crate::executive::ps::NAMED_FAT_IMAGE_SOURCE => "FAT named ELF",
         _ => unreachable!(),
     };
 
@@ -231,10 +322,56 @@ pub fn sys_create_process(regs: &mut SavedRegs) -> u64 {
         return STATUS_ACCESS_VIOLATION;
     }
 
-    let Ok((child, thread)) =
+    let created = if regs.x[1] == crate::executive::ps::NAMED_FAT_IMAGE_SOURCE {
+        let Ok(length) = usize::try_from(regs.x[4]) else {
+            return STATUS_INVALID_PARAMETER;
+        };
+        if regs.x[3] == 0 || !(1..=crate::executive::io::root::MAX_PATH_LENGTH).contains(&length) {
+            return STATUS_INVALID_PARAMETER;
+        }
+        let mut name = [0u8; crate::executive::io::root::MAX_PATH_LENGTH];
+        let copied = parent.with_user_address_space(|address_space| {
+            address_space.copy_from_user(regs.x[3], &mut name[..length])
+        });
+        if !matches!(copied, Some(Ok(()))) {
+            return STATUS_ACCESS_VIOLATION;
+        }
+        let Some(path) = crate::executive::io::root::parse_path(&name[..length]) else {
+            return STATUS_INVALID_PARAMETER;
+        };
+        let Ok(argument_length) = usize::try_from(regs.x[5]) else {
+            return STATUS_INVALID_PARAMETER;
+        };
+        if argument_length > 64 || (argument_length == 0) != (regs.x[2] == 0) {
+            return STATUS_INVALID_PARAMETER;
+        }
+        let mut arguments = [0u8; 64];
+        if argument_length != 0 {
+            let copied = parent.with_user_address_space(|address_space| {
+                address_space.copy_from_user(regs.x[2], &mut arguments[..argument_length])
+            });
+            if !matches!(copied, Some(Ok(()))) {
+                return STATUS_ACCESS_VIOLATION;
+            }
+            if !arguments[..argument_length]
+                .iter()
+                .all(|&byte| matches!(byte, b' '..=b'~'))
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+        }
+        crate::executive::ps::create_process_from_named_file(&path, &arguments[..argument_length])
+    } else {
         crate::executive::ps::create_process_from_source(regs.x[1], regs.x[2])
-    else {
-        return STATUS_INVALID_IMAGE_FORMAT;
+    };
+    let (child, thread) = match created {
+        Ok(created) => created,
+        Err(crate::executive::ps::LoadError::MissingImage)
+            if regs.x[1] == crate::executive::ps::NAMED_FAT_IMAGE_SOURCE =>
+        {
+            return STATUS_NO_SUCH_FILE;
+        }
+        Err(_) => return STATUS_INVALID_IMAGE_FORMAT,
     };
     let pid = child.pid.0;
     let Some(handle) = parent.insert_process_handle(child) else {
@@ -389,8 +526,121 @@ pub fn sys_free_virtual(regs: &mut SavedRegs) -> u64 {
     }
 }
 
-pub fn sys_create_file(_regs: &mut SavedRegs) -> u64 {
-    0xC000_0002
+pub fn sys_create_file(regs: &mut SavedRegs) -> u64 {
+    // x0 = writable handle output, x1 = root-level 8.3 name, x2 = name length.
+    let Ok(length) = usize::try_from(regs.x[2]) else {
+        return STATUS_INVALID_PARAMETER;
+    };
+    if regs.x[0] == 0
+        || regs.x[1] == 0
+        || !(1..=crate::executive::io::root::MAX_PATH_LENGTH).contains(&length)
+    {
+        return STATUS_INVALID_PARAMETER;
+    }
+    let Some(process) = crate::executive::ps::scheduler::current_process() else {
+        return STATUS_ACCESS_VIOLATION;
+    };
+    let mut name = [0u8; crate::executive::io::root::MAX_PATH_LENGTH];
+    let copied = process.with_user_address_space(|address_space| {
+        address_space.validate_user_writable_range(regs.x[0], 8)?;
+        address_space.copy_from_user(regs.x[1], &mut name[..length])
+    });
+    if !matches!(copied, Some(Ok(()))) {
+        return STATUS_ACCESS_VIOLATION;
+    }
+    let Some(path) = crate::executive::io::root::parse_path(&name[..length]) else {
+        return STATUS_INVALID_PARAMETER;
+    };
+    let Some(file) = crate::executive::io::root::open_path(&path) else {
+        log::warn!(
+            "Io: file open failed for {}",
+            core::str::from_utf8(&name[..length]).unwrap_or("invalid name")
+        );
+        return STATUS_NO_SUCH_FILE;
+    };
+    let Some(handle) = process.insert_file_handle(file) else {
+        return STATUS_NO_MEMORY;
+    };
+    let copied_output = process.with_user_address_space(|address_space| {
+        address_space.copy_to_user(regs.x[0], &handle.to_le_bytes())
+    });
+    if !matches!(copied_output, Some(Ok(()))) {
+        assert!(process.close_handle(handle));
+        return STATUS_ACCESS_VIOLATION;
+    }
+    0
+}
+
+pub fn sys_query_root_directory(regs: &mut SavedRegs) -> u64 {
+    // x0 = zero-based regular-file ordinal, x1 = writable 16-byte entry.
+    let Ok(index) = usize::try_from(regs.x[0]) else {
+        return STATUS_INVALID_PARAMETER;
+    };
+    if index >= 1024 || regs.x[1] == 0 {
+        return STATUS_INVALID_PARAMETER;
+    }
+    let Some(process) = crate::executive::ps::scheduler::current_process() else {
+        return STATUS_ACCESS_VIOLATION;
+    };
+    let output_valid = process.with_user_address_space(|address_space| {
+        address_space.validate_user_writable_range(regs.x[1], 16)
+    });
+    if !matches!(output_valid, Some(Ok(()))) {
+        return STATUS_ACCESS_VIOLATION;
+    }
+    let Some(entry) = crate::executive::io::root::root_file_at(index) else {
+        return STATUS_NO_MORE_FILES;
+    };
+    let encoded = crate::executive::io::root::encode_entry(entry);
+    let copied = process
+        .with_user_address_space(|address_space| address_space.copy_to_user(regs.x[1], &encoded));
+    if matches!(copied, Some(Ok(()))) {
+        0
+    } else {
+        STATUS_ACCESS_VIOLATION
+    }
+}
+
+pub fn sys_query_directory(regs: &mut SavedRegs) -> u64 {
+    // x0/x1 = 8.3 directory name pointer/length, x2 = ordinal,
+    // x3 = writable 16-byte entry. One directory level is supported.
+    let Ok(length) = usize::try_from(regs.x[1]) else {
+        return STATUS_INVALID_PARAMETER;
+    };
+    let Ok(index) = usize::try_from(regs.x[2]) else {
+        return STATUS_INVALID_PARAMETER;
+    };
+    if regs.x[0] == 0 || regs.x[3] == 0 || !(1..=12).contains(&length) || index >= 1024 {
+        return STATUS_INVALID_PARAMETER;
+    }
+    let Some(process) = crate::executive::ps::scheduler::current_process() else {
+        return STATUS_ACCESS_VIOLATION;
+    };
+    let mut name = [0u8; 12];
+    let copied = process.with_user_address_space(|address_space| {
+        address_space.validate_user_writable_range(regs.x[3], 16)?;
+        address_space.copy_from_user(regs.x[0], &mut name[..length])
+    });
+    if !matches!(copied, Some(Ok(()))) {
+        return STATUS_ACCESS_VIOLATION;
+    }
+    let Some(directory) = crate::executive::io::root::parse_name(&name[..length]) else {
+        return STATUS_INVALID_PARAMETER;
+    };
+    if !crate::executive::io::root::directory_exists(&directory) {
+        return STATUS_NO_SUCH_FILE;
+    }
+    let Some(entry) = crate::executive::io::root::directory_file_at(&directory, index) else {
+        return STATUS_NO_MORE_FILES;
+    };
+    let encoded = crate::executive::io::root::encode_entry(entry);
+    let copied = process
+        .with_user_address_space(|address_space| address_space.copy_to_user(regs.x[3], &encoded));
+    if matches!(copied, Some(Ok(()))) {
+        0
+    } else {
+        STATUS_ACCESS_VIOLATION
+    }
 }
 
 pub fn sys_close(regs: &mut SavedRegs) -> u64 {
@@ -435,7 +685,7 @@ pub fn sys_wait_for_single_object(regs: &mut SavedRegs) -> u64 {
             return STATUS_ACCESS_VIOLATION;
         }
         let ticks = u64::from_le_bytes(timeout);
-        if ticks == 0 || ticks > crate::executive::ps::scheduler::MAX_FINITE_WAIT_TICKS {
+        if ticks > crate::executive::ps::scheduler::MAX_FINITE_WAIT_TICKS {
             return STATUS_INVALID_PARAMETER;
         }
         Some(ticks)
@@ -495,7 +745,9 @@ pub fn sys_query_system_info(regs: &mut SavedRegs) -> u64 {
                 address_space.copy_to_user(regs.x[1], &output)
             }) {
                 Some(Ok(())) => {
-                    log::info!("NtQuerySystemInfo copied validated EL0 output");
+                    if !crate::desktop::is_active() {
+                        log::info!("NtQuerySystemInfo copied validated EL0 output");
+                    }
                     0
                 }
                 Some(Err(_)) | None => STATUS_ACCESS_VIOLATION,

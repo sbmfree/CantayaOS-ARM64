@@ -1,15 +1,12 @@
 [package]
-name = "cantaya-user-init"
+name = "cantaya-user-hello"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license-file.workspace = true
 
 [[bin]]
-name = "cantaya-user-init"
+name = "cantaya-user-hello"
 path = "src/main.rs"
 test = false
 bench = false
-
-[dependencies]
-cantaya-shared = { path = "../shared" }

@@ -7,9 +7,9 @@
 // Macros (defined first — LLVM assembler requires definition before use)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Save full general-purpose register context (x0–x29, lr, elr, spsr)
+// Save general-purpose and full FP/SIMD state. SavedRegs is the prefix.
 .macro SAVE_CONTEXT
-    sub  sp,  sp, #272
+    sub  sp,  sp, #800
     stp  x0,  x1,  [sp, #0]
     stp  x2,  x3,  [sp, #16]
     stp  x4,  x5,  [sp, #32]
@@ -29,9 +29,51 @@
     mrs  x1,  SPSR_EL1
     stp  x30, x0,  [sp, #240]
     str  x1,       [sp, #256]
+    stp  q0, q1, [sp, #272]
+    stp  q2, q3, [sp, #304]
+    stp  q4, q5, [sp, #336]
+    stp  q6, q7, [sp, #368]
+    stp  q8, q9, [sp, #400]
+    stp  q10, q11, [sp, #432]
+    stp  q12, q13, [sp, #464]
+    stp  q14, q15, [sp, #496]
+    stp  q16, q17, [sp, #528]
+    stp  q18, q19, [sp, #560]
+    stp  q20, q21, [sp, #592]
+    stp  q22, q23, [sp, #624]
+    stp  q24, q25, [sp, #656]
+    stp  q26, q27, [sp, #688]
+    stp  q28, q29, [sp, #720]
+    stp  q30, q31, [sp, #752]
+    mrs  x0, FPCR
+    mrs  x1, FPSR
+    str  x0, [sp, #784]
+    str  x1, [sp, #792]
+    msr  FPCR, xzr
+    msr  FPSR, xzr
 .endm
 
 .macro RESTORE_CONTEXT
+    ldr  x0, [sp, #784]
+    ldr  x1, [sp, #792]
+    msr  FPCR, x0
+    msr  FPSR, x1
+    ldp  q0, q1, [sp, #272]
+    ldp  q2, q3, [sp, #304]
+    ldp  q4, q5, [sp, #336]
+    ldp  q6, q7, [sp, #368]
+    ldp  q8, q9, [sp, #400]
+    ldp  q10, q11, [sp, #432]
+    ldp  q12, q13, [sp, #464]
+    ldp  q14, q15, [sp, #496]
+    ldp  q16, q17, [sp, #528]
+    ldp  q18, q19, [sp, #560]
+    ldp  q20, q21, [sp, #592]
+    ldp  q22, q23, [sp, #624]
+    ldp  q24, q25, [sp, #656]
+    ldp  q26, q27, [sp, #688]
+    ldp  q28, q29, [sp, #720]
+    ldp  q30, q31, [sp, #752]
     ldr  x1,       [sp, #256]
     ldp  x30, x0,  [sp, #240]
     msr  SPSR_EL1, x1
@@ -51,7 +93,7 @@
     ldp  x4,  x5,  [sp, #32]
     ldp  x2,  x3,  [sp, #16]
     ldp  x0,  x1,  [sp, #0]
-    add  sp,  sp, #272
+    add  sp,  sp, #800
 .endm
 
 .macro EL1_EXCEPTION_HANDLER num
@@ -110,6 +152,12 @@ _start:
     msr DAIFSet, #0xf
     msr SPSel, #1
     mov  x19, x0
+
+    // Enable FP/SIMD explicitly rather than inheriting the UEFI setting.
+    mrs  x9, CPACR_EL1
+    orr  x9, x9, #0x300000
+    msr  CPACR_EL1, x9
+    isb
 
     // Zero BSS (use adrp+add for ±4 GiB range; adr only has ±1 MiB)
     adrp x1, __bss_start
@@ -236,6 +284,14 @@ arch_context_switch:
     str  x9,       [x0, #120]
     mrs  x9,  SP_EL0            // save per-thread EL0 stack state
     str  x9,       [x0, #128]
+    stp  q8, q9, [x0, #144]
+    stp  q10, q11, [x0, #176]
+    stp  q12, q13, [x0, #208]
+    stp  q14, q15, [x0, #240]
+    mrs  x9, FPCR
+    str  x9, [x0, #272]
+    mrs  x9, FPSR
+    str  x9, [x0, #280]
 
     ldp  x19, x20, [x1, #0]
     ldp  x21, x22, [x1, #16]
@@ -251,6 +307,14 @@ arch_context_switch:
     msr  SPSR_EL1, x9
     ldr  x9,       [x1, #128]
     msr  SP_EL0, x9
+    ldp  q8, q9, [x1, #144]
+    ldp  q10, q11, [x1, #176]
+    ldp  q12, q13, [x1, #208]
+    ldp  q14, q15, [x1, #240]
+    ldr  x9, [x1, #272]
+    msr  FPCR, x9
+    ldr  x9, [x1, #280]
+    msr  FPSR, x9
     ldr  x9,       [x1, #120]  // restore interrupt mask state last
     msr  DAIF, x9
 
@@ -283,6 +347,14 @@ arch_context_save_and_enter_user:
     str  x9,       [x0, #120]
     mrs  x9,  SP_EL0
     str  x9,       [x0, #128]
+    stp  q8, q9, [x0, #144]
+    stp  q10, q11, [x0, #176]
+    stp  q12, q13, [x0, #208]
+    stp  q14, q15, [x0, #240]
+    mrs  x9, FPCR
+    str  x9, [x0, #272]
+    mrs  x9, FPSR
+    str  x9, [x0, #280]
 
     mov  x6, x5
     msr  DAIFSet, #0xf
@@ -300,5 +372,39 @@ arch_context_save_and_enter_user:
     msr  SPSR_EL1, x5
     mov  x0, x3
     mov  x1, x6
+    msr  FPCR, xzr
+    msr  FPSR, xzr
+    movi v0.16b, #0
+    movi v1.16b, #0
+    movi v2.16b, #0
+    movi v3.16b, #0
+    movi v4.16b, #0
+    movi v5.16b, #0
+    movi v6.16b, #0
+    movi v7.16b, #0
+    movi v8.16b, #0
+    movi v9.16b, #0
+    movi v10.16b, #0
+    movi v11.16b, #0
+    movi v12.16b, #0
+    movi v13.16b, #0
+    movi v14.16b, #0
+    movi v15.16b, #0
+    movi v16.16b, #0
+    movi v17.16b, #0
+    movi v18.16b, #0
+    movi v19.16b, #0
+    movi v20.16b, #0
+    movi v21.16b, #0
+    movi v22.16b, #0
+    movi v23.16b, #0
+    movi v24.16b, #0
+    movi v25.16b, #0
+    movi v26.16b, #0
+    movi v27.16b, #0
+    movi v28.16b, #0
+    movi v29.16b, #0
+    movi v30.16b, #0
+    movi v31.16b, #0
     eret
     .size arch_context_save_and_enter_user, . - arch_context_save_and_enter_user

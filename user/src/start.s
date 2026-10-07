@@ -30,9 +30,21 @@ _start:
     mov x9, #0x7b
     cmp x1, x9
     b.eq el0_shell_main
+    mov x9, #0x7d
+    cmp x1, x9
+    b.eq el0_shell_main
+    mov x9, #0x7e
+    cmp x1, x9
+    b.eq el0_shell_main
     mov x9, #0x7c
     cmp x1, x9
     b.eq console_input_blocked_entry
+    mov x9, #0x78
+    cmp x1, x9
+    b.eq el0_window_wait_probe
+    and x9, x1, #0xff
+    cmp x9, #0x7f
+    b.eq el0_desktop_denied_probe
     // Initial processes start with x1=0. Any other controlled value here is
     // an opaque parent-owned handle to probe from this empty child table.
     cbnz x1, handle_isolation_probe_entry
@@ -41,6 +53,18 @@ _start:
     // cookie on that stack while timer IRQs force switches between processes.
     sub sp, sp, #16
     str x0, [sp]
+    lsr x0, x0, #12
+    bl el0_simd_probe
+    cbz x0, .Linitial_simd_ok
+    brk #0
+.Linitial_simd_ok:
+    movn x0, #0
+    adr x1, simd_validated_message
+    adr x2, simd_validated_message_end
+    sub x2, x2, x1
+    mov x8, #0x8
+    svc #0
+    ldr x0, [sp] // restore the original cookie value for the resume probe
 
     movz x9, #0x2d00
     movk x9, #0x0131, lsl #16
@@ -2073,6 +2097,7 @@ wait_preflight_probe_ready:
     cmp x9, #0x7e
     b.ne 2f
 
+    // A zero timeout polls a live object without registering a waiter.
     str xzr, [sp, #24]
     mov x0, x25
     mov x1, xzr
@@ -2080,7 +2105,7 @@ wait_preflight_probe_ready:
     add x3, sp, #32
     mov x8, #0x4
     svc #0
-    cmp x0, x20
+    cmp x0, #0x102
     b.ne 2f
     ldr x9, [sp, #32]
     cmp x9, #0x7e
@@ -3429,3 +3454,8 @@ mixed_churn_process_handle:
     .quad 0
 mixed_churn_thread_handle:
     .quad 0
+
+.section ".rodata", "a"
+simd_validated_message:
+    .ascii "[user-init] FP/SIMD state validated\n"
+simd_validated_message_end:

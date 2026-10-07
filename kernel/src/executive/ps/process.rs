@@ -1,9 +1,11 @@
 //! EPROCESS — Executive Process structure.
 
 use crate::arch::mmu::UserAddressSpace;
+use crate::executive::io::root::OpenFile;
 use crate::executive::ke::spinlock::IrqState;
 use crate::executive::ob::handle::{
-    Handle, HandleAccess, HandleObject, HandleTable, HANDLE_ACCESS_TERMINATE, HANDLE_ACCESS_WAIT,
+    Handle, HandleAccess, HandleObject, HandleTable, HANDLE_ACCESS_READ, HANDLE_ACCESS_TERMINATE,
+    HANDLE_ACCESS_WAIT,
 };
 use crate::executive::ob::types::{ObjectHeader, OB_TYPE_PROCESS};
 use crate::executive::ps::thread::ThreadObject;
@@ -108,6 +110,12 @@ impl EProcess {
         )
     }
 
+    pub fn insert_file_handle(&self, file: Arc<OpenFile>) -> Option<Handle> {
+        self.handle_table
+            .lock()
+            .insert(HandleObject::File(file), HANDLE_ACCESS_READ)
+    }
+
     pub fn insert_thread_handle(&self, target: Arc<ThreadObject>) -> Option<Handle> {
         self.insert_thread_handle_with_access(target, HANDLE_ACCESS_WAIT | HANDLE_ACCESS_TERMINATE)
     }
@@ -136,7 +144,7 @@ impl EProcess {
     /// Record one thread's exit and wake process waiters when it was the last
     /// active execution record.
     pub fn thread_exited(&self, status: i32) -> Vec<usize> {
-        self.with_completion(|completion| {
+        let waiters = self.with_completion(|completion| {
             assert!(
                 completion.active_threads > 0,
                 "process thread accounting underflow"
@@ -148,7 +156,11 @@ impl EProcess {
 
             completion.exit_status = Some(status);
             completion.waiters.drain(..).collect()
-        })
+        });
+        if self.exit_status().is_some() {
+            crate::desktop::process_exited(self.pid.0);
+        }
+        waiters
     }
 
     /// Return a final process status, or register a scheduler thread that

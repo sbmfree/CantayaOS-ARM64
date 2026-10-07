@@ -6,24 +6,29 @@
 //!   Scheduler — round-robin preemptive (timer-driven)
 
 mod elf;
+pub use elf::LoadError;
 pub mod process;
 pub mod scheduler;
 pub mod thread;
 
 use alloc::sync::Arc;
-use cantaya_shared::{BootInfo, BOOT_FLAG_CONSOLE_INPUT_PROBE};
+use cantaya_shared::{BootInfo, BOOT_FLAG_CONSOLE_INPUT_PROBE, BOOT_FLAG_EL1_FALLBACK_PROBE};
 use process::EProcess;
 use spin::Mutex;
 use thread::EThread;
 
 pub const INITIAL_IMAGE_SOURCE: u64 = elf::INITIAL_IMAGE_SOURCE;
 pub const FAT_CHILD_IMAGE_SOURCE: u64 = elf::FAT_CHILD_IMAGE_SOURCE;
+pub const NAMED_FAT_IMAGE_SOURCE: u64 = elf::NAMED_FAT_IMAGE_SOURCE;
 
 static INITIAL_PROCESSES: Mutex<Option<[Arc<EProcess>; 2]>> = Mutex::new(None);
 
 /// One-time initialisation: create the idle process + System process.
 pub fn init(boot_info: &BootInfo) {
-    scheduler::init(boot_info.flags & BOOT_FLAG_CONSOLE_INPUT_PROBE != 0);
+    scheduler::init(
+        boot_info.flags & BOOT_FLAG_CONSOLE_INPUT_PROBE != 0,
+        boot_info.flags & BOOT_FLAG_EL1_FALLBACK_PROBE != 0,
+    );
     let [(first_process, first_thread), (second_process, second_thread)] =
         elf::load_initial_processes(boot_info)
             .expect("failed to load the initial user-mode ELF process");
@@ -60,4 +65,11 @@ pub fn create_process_from_source(
     initial_argument: u64,
 ) -> Result<(Arc<EProcess>, *mut EThread), elf::LoadError> {
     elf::create_process_from_source(source, initial_argument)
+}
+
+pub fn create_process_from_named_file(
+    path: &crate::executive::io::root::ParsedPath,
+    arguments: &[u8],
+) -> Result<(Arc<EProcess>, *mut EThread), elf::LoadError> {
+    elf::create_process_from_named_file(path, arguments)
 }

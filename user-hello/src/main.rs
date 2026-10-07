@@ -3,11 +3,7 @@
 
 use core::arch::global_asm;
 
-mod desktop;
-mod shell;
-
 global_asm!(include_str!("start.s"));
-global_asm!(include_str!("simd_probe.s"));
 
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {

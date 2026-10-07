@@ -1,4 +1,4 @@
-//! Minimal synchronous VirtIO 1.0 block reader for QEMU `virt` MMIO slot zero.
+//! Minimal synchronous VirtIO 1.0 block readers for QEMU `virt` MMIO devices.
 
 use crate::drivers::fat::{BlockDevice, SECTOR_SIZE};
 use aarch64_cpu::asm::barrier;
@@ -27,11 +27,15 @@ const VIRTIO_MMIO_QUEUE_DRIVER_LOW: usize = 0x090;
 const VIRTIO_MMIO_QUEUE_DEVICE_LOW: usize = 0x0A0;
 const VIRTIO_BLK_CONFIG_CAPACITY: usize = 0x100;
 pub const MAX_BOOT_VOLUME_SECTORS: u64 = 128 * 1024 * 1024 / SECTOR_SIZE as u64;
+pub const MAX_DATA_VOLUME_SECTORS: u64 = 32 * 1024 * 1024 / SECTOR_SIZE as u64;
+const BOOT_VOLUME_LABEL: [u8; 11] = *b"CANTBOOT   ";
+const DATA_VOLUME_LABEL: [u8; 11] = *b"CANTDATA   ";
 
 const VIRTIO_MAGIC: u32 = 0x7472_6976;
 const VIRTIO_MMIO_VERSION_1: u32 = 2;
 const VIRTIO_DEVICE_BLOCK: u32 = 2;
 const VIRTIO_F_VERSION_1: u32 = 1;
+const VIRTIO_BLK_F_FLUSH: u32 = 1 << 9;
 const VIRTIO_STATUS_ACKNOWLEDGE: u32 = 1;
 const VIRTIO_STATUS_DRIVER: u32 = 2;
 const VIRTIO_STATUS_DRIVER_OK: u32 = 4;
@@ -47,8 +51,11 @@ const BUFFER_HEADER_OFFSET: usize = 0;
 const BUFFER_STATUS_OFFSET: usize = 16;
 const BUFFER_DATA_OFFSET: usize = 512;
 const VIRTIO_BLK_T_IN: u32 = 0;
+const VIRTIO_BLK_T_OUT: u32 = 1;
+const VIRTIO_BLK_T_FLUSH: u32 = 4;
 const VIRTIO_BLK_S_OK: u8 = 0;
-const POLL_LIMIT: usize = 1_000_000;
+// A deadline is independent of how quickly TCG executes the polling loop.
+const READ_TIMEOUT_DIVISOR: u64 = 4; // 250 ms
 
 #[repr(C)]
 struct VirtqDesc {
@@ -77,14 +84,23 @@ struct VirtioBlock {
     buffer_phys: u64,
     sector_count: u64,
     last_used: u16,
+    pending: bool,
+    healthy: bool,
+    flush_supported: bool,
 }
 
 static BOOT_BLOCK: Mutex<Option<VirtioBlock>> = Mutex::new(None);
+static DATA_BLOCK: Mutex<Option<VirtioBlock>> = Mutex::new(None);
 
 /// Fixed block device containing the FAT boot volume on QEMU `virt`.
 pub struct BootDisk;
 
 pub static BOOT_DISK: BootDisk = BootDisk;
+
+/// Optional distinct block device reserved for future durable data storage.
+pub struct DataDisk;
+
+pub static DATA_DISK: DataDisk = DataDisk;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum InitError {
@@ -98,17 +114,56 @@ enum InitError {
 /// Initialise the fixed QEMU VirtIO-MMIO block device before Ps can load
 /// runtime program sources.
 pub fn init() {
-    let mut device = BOOT_BLOCK.lock();
-    if device.is_some() {
+    if BOOT_BLOCK.lock().is_some() {
         return;
     }
-    let block = VirtioBlock::new().expect("failed to initialize QEMU VirtIO block device");
+
+    let mut boot_block = None;
+    let mut data_block = None;
+    for index in 0..VIRTIO_MMIO_SLOT_COUNT as usize {
+        let Some(base) = find_block_device(index) else {
+            break;
+        };
+        let mut block = match VirtioBlock::new(base) {
+            Ok(block) => block,
+            Err(error) => {
+                log::warn!(
+                    "VirtIO block: device at {:#x} initialization failed ({:?})",
+                    base,
+                    error,
+                );
+                continue;
+            }
+        };
+        match volume_label(&mut block) {
+            Some(BOOT_VOLUME_LABEL) if boot_block.is_none() => boot_block = Some(block),
+            Some(DATA_VOLUME_LABEL) if data_block.is_none() => data_block = Some(block),
+            Some(_) => log::warn!("VirtIO block: ignoring unrecognized device at {:#x}", base),
+            None => log::warn!("VirtIO block: could not read volume label at {:#x}", base),
+        }
+        if boot_block.is_some() && data_block.is_some() {
+            break;
+        }
+    }
+
+    let block = boot_block.expect("missing QEMU VirtIO boot block device");
     log::info!(
         "VirtIO block: live read-only boot disk ready at {:#x} ({} sectors)",
         block.mmio_base,
         block.sector_count,
     );
-    *device = Some(block);
+    *BOOT_BLOCK.lock() = Some(block);
+
+    let Some(block) = data_block else {
+        log::warn!("VirtIO block: separate data disk unavailable; boot disk remains usable");
+        return;
+    };
+    log::info!(
+        "VirtIO block: separate data disk ready at {:#x} ({} sectors)",
+        block.mmio_base,
+        block.sector_count,
+    );
+    *DATA_BLOCK.lock() = Some(block);
 }
 
 impl BlockDevice for BootDisk {
@@ -133,9 +188,50 @@ impl BlockDevice for BootDisk {
     }
 }
 
+impl BlockDevice for DataDisk {
+    fn sector_count(&self) -> u64 {
+        DATA_BLOCK
+            .lock()
+            .as_ref()
+            .map_or(0, |block| block.sector_count.min(MAX_DATA_VOLUME_SECTORS))
+    }
+
+    fn read_sector(&self, sector: u64, output: &mut [u8; SECTOR_SIZE]) -> bool {
+        if sector >= self.sector_count() {
+            return false;
+        }
+        let irq_state = crate::executive::ke::spinlock::IrqState::disable();
+        let result = DATA_BLOCK
+            .lock()
+            .as_mut()
+            .is_some_and(|block| block.read_sector(sector, output));
+        irq_state.restore();
+        result
+    }
+
+    fn write_sector(&self, sector: u64, input: &[u8; SECTOR_SIZE]) -> bool {
+        if sector >= self.sector_count() {
+            return false;
+        }
+        let irq_state = crate::executive::ke::spinlock::IrqState::disable();
+        let result = DATA_BLOCK
+            .lock()
+            .as_mut()
+            .is_some_and(|block| block.write_sector(sector, input));
+        irq_state.restore();
+        result
+    }
+
+    fn flush(&self) -> bool {
+        let irq_state = crate::executive::ke::spinlock::IrqState::disable();
+        let result = DATA_BLOCK.lock().as_mut().is_some_and(|block| block.flush());
+        irq_state.restore();
+        result
+    }
+}
+
 impl VirtioBlock {
-    fn new() -> Result<Self, InitError> {
-        let mmio_base = find_block_device().ok_or(InitError::MissingDevice)?;
+    fn new(mmio_base: u64) -> Result<Self, InitError> {
         if read_reg(mmio_base, VIRTIO_MMIO_VERSION) != VIRTIO_MMIO_VERSION_1 {
             return Err(InitError::UnsupportedVersion);
         }
@@ -148,12 +244,19 @@ impl VirtioBlock {
             VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
         );
 
+        write_reg(mmio_base, VIRTIO_MMIO_DEVICE_FEATURES_SEL, 0);
+        let device_features = read_reg(mmio_base, VIRTIO_MMIO_DEVICE_FEATURES);
+
         write_reg(mmio_base, VIRTIO_MMIO_DEVICE_FEATURES_SEL, 1);
         if read_reg(mmio_base, VIRTIO_MMIO_DEVICE_FEATURES) & VIRTIO_F_VERSION_1 == 0 {
             return Err(InitError::MissingVersionFeature);
         }
         write_reg(mmio_base, VIRTIO_MMIO_DRIVER_FEATURES_SEL, 0);
-        write_reg(mmio_base, VIRTIO_MMIO_DRIVER_FEATURES, 0);
+        write_reg(
+            mmio_base,
+            VIRTIO_MMIO_DRIVER_FEATURES,
+            device_features & VIRTIO_BLK_F_FLUSH,
+        );
         write_reg(mmio_base, VIRTIO_MMIO_DRIVER_FEATURES_SEL, 1);
         write_reg(mmio_base, VIRTIO_MMIO_DRIVER_FEATURES, VIRTIO_F_VERSION_1);
 
@@ -223,11 +326,19 @@ impl VirtioBlock {
             buffer_phys,
             sector_count,
             last_used: 0,
+            pending: false,
+            healthy: true,
+            flush_supported: device_features & VIRTIO_BLK_F_FLUSH != 0,
         })
     }
 
     fn read_sector(&mut self, sector: u64, output: &mut [u8; SECTOR_SIZE]) -> bool {
-        if sector >= self.sector_count {
+        if sector >= self.sector_count || !self.healthy {
+            return false;
+        }
+        // A timed-out request still owns its descriptors and DMA buffer. Drain
+        // its completion before publishing another request; never overwrite it.
+        if self.pending && !self.wait_for_completion() {
             return false;
         }
         let queue = crate::arch::mmu::phys_to_direct_map(self.queue_phys) as usize;
@@ -277,14 +388,169 @@ impl VirtioBlock {
                 avail_index.wrapping_add(1),
             );
             barrier::dsb(barrier::ISHST);
+            self.pending = true;
             write_reg(self.mmio_base, VIRTIO_MMIO_QUEUE_NOTIFY, 0);
+        }
+        if !self.wait_for_completion() {
+            return false;
+        }
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                (buffer + BUFFER_DATA_OFFSET) as *const u8,
+                output.as_mut_ptr(),
+                SECTOR_SIZE,
+            );
+        }
+        true
+    }
 
-            for _ in 0..POLL_LIMIT {
+    fn write_sector(&mut self, sector: u64, input: &[u8; SECTOR_SIZE]) -> bool {
+        if sector >= self.sector_count || !self.healthy {
+            return false;
+        }
+        if self.pending && !self.wait_for_completion() {
+            return false;
+        }
+        let queue = crate::arch::mmu::phys_to_direct_map(self.queue_phys) as usize;
+        let buffer = crate::arch::mmu::phys_to_direct_map(self.buffer_phys) as usize;
+        unsafe {
+            ((buffer + BUFFER_HEADER_OFFSET) as *mut VirtioBlkReqHeader).write(
+                VirtioBlkReqHeader {
+                    request_type: VIRTIO_BLK_T_OUT,
+                    reserved: 0,
+                    sector,
+                },
+            );
+            core::ptr::copy_nonoverlapping(
+                input.as_ptr(),
+                (buffer + BUFFER_DATA_OFFSET) as *mut u8,
+                SECTOR_SIZE,
+            );
+            core::ptr::write_volatile((buffer + BUFFER_STATUS_OFFSET) as *mut u8, u8::MAX);
+            write_desc(
+                queue,
+                0,
+                self.buffer_phys + BUFFER_HEADER_OFFSET as u64,
+                core::mem::size_of::<VirtioBlkReqHeader>() as u32,
+                DESC_NEXT,
+                1,
+            );
+            write_desc(
+                queue,
+                1,
+                self.buffer_phys + BUFFER_DATA_OFFSET as u64,
+                SECTOR_SIZE as u32,
+                DESC_NEXT,
+                2,
+            );
+            write_desc(
+                queue,
+                2,
+                self.buffer_phys + BUFFER_STATUS_OFFSET as u64,
+                1,
+                DESC_WRITE,
+                0,
+            );
+
+            let avail_index =
+                core::ptr::read_volatile((queue + QUEUE_AVAIL_OFFSET + 2) as *const u16);
+            let ring_offset =
+                queue + QUEUE_AVAIL_OFFSET + 4 + (avail_index as usize % QUEUE_SIZE as usize) * 2;
+            core::ptr::write_volatile(ring_offset as *mut u16, 0);
+            barrier::dsb(barrier::ISHST);
+            core::ptr::write_volatile(
+                (queue + QUEUE_AVAIL_OFFSET + 2) as *mut u16,
+                avail_index.wrapping_add(1),
+            );
+            barrier::dsb(barrier::ISHST);
+            self.pending = true;
+            write_reg(self.mmio_base, VIRTIO_MMIO_QUEUE_NOTIFY, 0);
+        }
+        self.wait_for_completion()
+    }
+
+    fn flush(&mut self) -> bool {
+        if !self.flush_supported || !self.healthy {
+            return false;
+        }
+        if self.pending && !self.wait_for_completion() {
+            return false;
+        }
+        let queue = crate::arch::mmu::phys_to_direct_map(self.queue_phys) as usize;
+        let buffer = crate::arch::mmu::phys_to_direct_map(self.buffer_phys) as usize;
+        unsafe {
+            ((buffer + BUFFER_HEADER_OFFSET) as *mut VirtioBlkReqHeader).write(
+                VirtioBlkReqHeader {
+                    request_type: VIRTIO_BLK_T_FLUSH,
+                    reserved: 0,
+                    sector: 0,
+                },
+            );
+            core::ptr::write_volatile((buffer + BUFFER_STATUS_OFFSET) as *mut u8, u8::MAX);
+            write_desc(
+                queue,
+                0,
+                self.buffer_phys + BUFFER_HEADER_OFFSET as u64,
+                core::mem::size_of::<VirtioBlkReqHeader>() as u32,
+                DESC_NEXT,
+                1,
+            );
+            write_desc(
+                queue,
+                1,
+                self.buffer_phys + BUFFER_STATUS_OFFSET as u64,
+                1,
+                DESC_WRITE,
+                0,
+            );
+
+            let avail_index =
+                core::ptr::read_volatile((queue + QUEUE_AVAIL_OFFSET + 2) as *const u16);
+            let ring_offset =
+                queue + QUEUE_AVAIL_OFFSET + 4 + (avail_index as usize % QUEUE_SIZE as usize) * 2;
+            core::ptr::write_volatile(ring_offset as *mut u16, 0);
+            barrier::dsb(barrier::ISHST);
+            core::ptr::write_volatile(
+                (queue + QUEUE_AVAIL_OFFSET + 2) as *mut u16,
+                avail_index.wrapping_add(1),
+            );
+            barrier::dsb(barrier::ISHST);
+            self.pending = true;
+            write_reg(self.mmio_base, VIRTIO_MMIO_QUEUE_NOTIFY, 0);
+        }
+        self.wait_for_completion()
+    }
+
+    fn wait_for_completion(&mut self) -> bool {
+        let queue = crate::arch::mmu::phys_to_direct_map(self.queue_phys) as usize;
+        let buffer = crate::arch::mmu::phys_to_direct_map(self.buffer_phys) as usize;
+        let frequency: u64;
+        let started: u64;
+        unsafe {
+            core::arch::asm!("mrs {}, CNTFRQ_EL0", out(reg) frequency);
+        }
+        unsafe {
+            core::arch::asm!("mrs {}, CNTPCT_EL0", out(reg) started);
+        }
+        let timeout = (frequency / READ_TIMEOUT_DIVISOR).max(1);
+        unsafe {
+            loop {
                 barrier::dsb(barrier::ISH);
                 let used_index =
                     core::ptr::read_volatile((queue + QUEUE_USED_OFFSET + 2) as *const u16);
                 if used_index == self.last_used {
+                    let now: u64;
+                    core::arch::asm!("mrs {}, CNTPCT_EL0", out(reg) now);
+                    if now.wrapping_sub(started) >= timeout {
+                        log::warn!("VirtIO block: read timeout; retaining pending DMA request");
+                        return false;
+                    }
+                    core::hint::spin_loop();
                     continue;
+                }
+                if used_index != self.last_used.wrapping_add(1) {
+                    self.healthy = false;
+                    return false;
                 }
                 let used_offset = queue
                     + QUEUE_USED_OFFSET
@@ -293,25 +559,23 @@ impl VirtioBlock {
                         * core::mem::size_of::<VirtqUsedElem>();
                 let used = core::ptr::read_volatile(used_offset as *const VirtqUsedElem);
                 self.last_used = self.last_used.wrapping_add(1);
+                self.pending = false;
                 let interrupt_status = read_reg(self.mmio_base, VIRTIO_MMIO_INTERRUPT_STATUS);
                 if interrupt_status != 0 {
                     write_reg(self.mmio_base, VIRTIO_MMIO_INTERRUPT_ACK, interrupt_status);
                 }
-                if used.id != 0
-                    || core::ptr::read_volatile((buffer + BUFFER_STATUS_OFFSET) as *const u8)
-                        != VIRTIO_BLK_S_OK
+                if used.id != 0 {
+                    self.healthy = false;
+                    return false;
+                }
+                if core::ptr::read_volatile((buffer + BUFFER_STATUS_OFFSET) as *const u8)
+                    != VIRTIO_BLK_S_OK
                 {
                     return false;
                 }
-                core::ptr::copy_nonoverlapping(
-                    (buffer + BUFFER_DATA_OFFSET) as *const u8,
-                    output.as_mut_ptr(),
-                    SECTOR_SIZE,
-                );
                 return true;
             }
         }
-        false
     }
 }
 
@@ -328,14 +592,23 @@ unsafe fn write_desc(queue: usize, index: usize, address: u64, length: u32, flag
     }
 }
 
+fn volume_label(block: &mut VirtioBlock) -> Option<[u8; 11]> {
+    let mut boot_sector = [0u8; SECTOR_SIZE];
+    block.read_sector(0, &mut boot_sector).then_some(())?;
+    let mut label = [0u8; 11];
+    label.copy_from_slice(boot_sector.get(71..82)?);
+    Some(label)
+}
+
 #[inline]
-fn find_block_device() -> Option<u64> {
+fn find_block_device(index: usize) -> Option<u64> {
     (0..VIRTIO_MMIO_SLOT_COUNT)
         .map(|slot| VIRTIO_MMIO_BASE + slot * VIRTIO_MMIO_SLOT_STRIDE)
-        .find(|&base| {
+        .filter(|&base| {
             read_reg(base, VIRTIO_MMIO_MAGIC_VALUE) == VIRTIO_MAGIC
                 && read_reg(base, VIRTIO_MMIO_DEVICE_ID) == VIRTIO_DEVICE_BLOCK
         })
+        .nth(index)
 }
 
 #[inline]

@@ -53,6 +53,9 @@ fn claim(state: &mut InputState, process: &Arc<EProcess>) -> Result<u64, InputEr
         state.waiters.is_empty(),
         "exited console owner retained a waiter"
     );
+    // A new console owner must not inherit an exited process's graphics or
+    // queued input. Keep this transition inside the IRQ-masked ownership lock.
+    crate::desktop::reset();
     state.generation = state
         .generation
         .checked_add(1)
@@ -63,7 +66,7 @@ fn claim(state: &mut InputState, process: &Arc<EProcess>) -> Result<u64, InputEr
 
 fn input_ready() -> bool {
     let keyboard_ready = crate::drivers::keyboard::has_pending_byte();
-    crate::hal::uart::has_input() || keyboard_ready
+    crate::hal::uart::has_input() || keyboard_ready || crate::desktop::has_pending()
 }
 
 /// Claim input without consuming it, returning the ownership generation used
@@ -74,6 +77,7 @@ pub fn claim_input(process: &Arc<EProcess>) -> Result<u64, InputError> {
 
 pub fn write(args: core::fmt::Arguments<'_>) {
     crate::hal::uart::write_console(args);
+    crate::desktop::write(args);
     crate::hal::framebuffer::write_fmt(args);
 }
 
@@ -112,6 +116,7 @@ pub fn release_input(process: &Arc<EProcess>) -> bool {
             .generation
             .checked_add(1)
             .expect("console generation exhausted");
+        crate::desktop::reset();
         Some(core::mem::take(&mut state.waiters))
     });
     let Some(waiters) = waiters else {
@@ -196,7 +201,11 @@ pub fn owns_input(process: &Arc<EProcess>) -> bool {
 
 pub fn clear() {
     crate::hal::uart::write_console(format_args!("\x1b[2J\x1b[H"));
-    crate::hal::framebuffer::show_shell_screen();
+    if crate::desktop::is_active() {
+        crate::desktop::capture("\x0c");
+    } else {
+        crate::hal::framebuffer::show_shell_screen();
+    }
 }
 
 /// The kernel prompt may poll only when no live EL0 process owns input.

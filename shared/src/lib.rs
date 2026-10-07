@@ -6,6 +6,9 @@
 
 #![no_std]
 
+pub mod desktop;
+pub mod font;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Framebuffer
 // ─────────────────────────────────────────────────────────────────────────────
@@ -120,6 +123,26 @@ impl MemoryMap {
 pub const BOOT_INFO_MAGIC: u64 = 0xC4_A7_4A_05_00_00_00_01;
 /// Run the interactive EL0 console-input contract probe (smoke boot only).
 pub const BOOT_FLAG_CONSOLE_INPUT_PROBE: u32 = 1;
+/// End the EL0 shell after it claims input, so smoke can exercise EL1 fallback.
+pub const BOOT_FLAG_EL1_FALLBACK_PROBE: u32 = 1 << 1;
+/// Create a private data-volume transaction during kernel I/O initialization.
+pub const BOOT_FLAG_STORAGE_CREATE_PROBE: u32 = 1 << 2;
+/// Verify a private data-volume transaction after a separate reboot.
+pub const BOOT_FLAG_STORAGE_VERIFY_PROBE: u32 = 1 << 3;
+/// Exercise private data-volume transaction failure recovery.
+pub const BOOT_FLAG_STORAGE_FAILURE_PROBE: u32 = 1 << 4;
+/// Interrupt a private data-volume transaction after a durable checkpoint.
+pub const BOOT_FLAG_STORAGE_INTERRUPT_CREATE_PROBE: u32 = 1 << 5;
+/// Verify recovery after a private data-volume transaction interruption.
+pub const BOOT_FLAG_STORAGE_INTERRUPT_VERIFY_PROBE: u32 = 1 << 6;
+/// Exercise private data-volume corruption rejection.
+pub const BOOT_FLAG_STORAGE_CORRUPTION_PROBE: u32 = 1 << 7;
+/// Exercise private data-volume capacity and root-directory exhaustion.
+pub const BOOT_FLAG_STORAGE_CAPACITY_PROBE: u32 = 1 << 12;
+/// Bit position of the private transaction interruption checkpoint number.
+pub const BOOT_STORAGE_INTERRUPT_CHECKPOINT_SHIFT: u32 = 8;
+/// Bit mask for the private transaction interruption checkpoint number.
+pub const BOOT_STORAGE_INTERRUPT_CHECKPOINT_MASK: u32 = 0xF << BOOT_STORAGE_INTERRUPT_CHECKPOINT_SHIFT;
 
 /// Top-level structure passed from the bootloader to the kernel via `x0`.
 ///

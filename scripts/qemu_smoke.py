@@ -15,12 +15,18 @@ import threading
 import time
 from pathlib import Path
 
+from fat_fixtures import prepare_fixtures
+from desktop_checks import check_desktop, screenshot
+
 TERMINAL_PROMPT = "CantayaOS terminal. Type 'help' for commands."
 CONSOLE_INPUT_READY = "[user-init] EL0 console input ready"
 CONSOLE_INPUT_ISOLATED = "[user-init] EL0 console input isolation validated"
 CONSOLE_KEYBOARD_READY = "[user-init] EL0 console keyboard ready"
 CONSOLE_INPUT_VALIDATED = "[user-init] EL0 console input validated"
 USER_SHELL_READY = "[user-shell] EL0 command loop ready"
+FALLBACK_PROBE_RELEASE = "[user-shell] fallback probe releasing input"
+FALLBACK_READY = "Ps: EL0 shell exited; restoring EL1 fallback prompt"
+FALLBACK_SERIAL_RESPONSE = "\nfallbackserial\ncantaya> "
 KEYBOARD_HELP_RESPONSE = "help          Show commands"
 KEYBOARD_EDIT_RESPONSE = "\nedited\ncantaya> "
 SERIAL_ECHO_RESPONSE = "\nserialprobe\ncantaya> "
@@ -50,6 +56,31 @@ OVERFLOW_RESPONSE = (
 OVERFLOW_FOLLOWUP_RESPONSE = "\nboundok\ncantaya> "
 QUESTION_HELP_RESPONSE = "?\nhelp          Show commands"
 BARE_ECHO_RESPONSE = "echo\n\ncantaya> "
+ROOT_FILE_LISTING = "README.TXT  "
+ROOT_FILE_CONTENT = "CantayaOS boot disk\nUse ls to list root files and cat README.TXT to read this text.\n"
+DATA_VOLUME_READY = "Io: data volume FAT32 mount metadata and flush validated"
+DATA_VOLUME_TRANSACTION_READY = "Io: data-volume transaction create/readback/recovery validated"
+DATA_VOLUME_PERSISTENCE_READY = "Io: data-volume transaction reboot persistence validated"
+DATA_VOLUME_FAILURE_READY = "Io: data-volume transaction failure recovery validated"
+DATA_VOLUME_CORRUPTION_READY = "Io: data-volume corruption rejection validated"
+DATA_VOLUME_CAPACITY_READY = "Io: data-volume capacity and directory exhaustion validated"
+
+
+def storage_interrupt_marker(checkpoint: int, recovery: bool = False) -> str:
+    if recovery:
+        return f"Io: data-volume transaction interruption recovery validated at checkpoint {checkpoint}"
+    return f"Io: data-volume transaction interruption checkpoint {checkpoint} durable"
+
+
+MISSING_FILE_RESPONSE = "Cannot open file: NOFILE.TXT\ncantaya> "
+HELLO_OUTPUT = "Hello from CantayaOS!"
+PROGRAM_EXIT = "Program exited: 0x2a"
+INVALID_PROGRAM_RESPONSE = "Cannot run program: README.TXT"
+MISSING_PROGRAM_RESPONSE = "Cannot run program: NOFILE.ELF"
+ROOT_DIRECTORY_LISTING = "DOCS/"
+SUBDIRECTORY_LISTING = "NOTE.TXT  "
+SUBDIRECTORY_CONTENT = "This note lives in the DOCS directory."
+PROGRAM_ARGUMENT = "Argument: world"
 SERIAL_STEPS = (
     (CONSOLE_INPUT_READY, b"@"),
     (KEYBOARD_EDIT_RESPONSE, b"echo serialprobe\r"),
@@ -63,6 +94,15 @@ SERIAL_STEPS = (
     (OVERFLOW_RESPONSE, b"echo boundok\r"),
     (OVERFLOW_FOLLOWUP_RESPONSE, b"?\r"),
     (QUESTION_HELP_RESPONSE, b"echo\r"),
+    (BARE_ECHO_RESPONSE, b"ls\r"),
+    (ROOT_FILE_LISTING, b"cat README.TXT\r"),
+    (ROOT_FILE_CONTENT, b"cat NOFILE.TXT\r"),
+    (MISSING_FILE_RESPONSE, b"run HELLO.ELF\r"),
+    (PROGRAM_EXIT, b"run README.TXT\r"),
+    (INVALID_PROGRAM_RESPONSE, b"run NOFILE.ELF\r"),
+    (MISSING_PROGRAM_RESPONSE, b"ls DOCS\r"),
+    (SUBDIRECTORY_LISTING, b"cat DOCS/NOTE.TXT\r"),
+    (SUBDIRECTORY_CONTENT, b"run BIN/HELLO.ELF world\r"),
 )
 KEYBOARD_STEPS = (
     (CONSOLE_KEYBOARD_READY, ("k",)),
@@ -107,7 +147,20 @@ REQUIRED_MARKERS = (
     "AArch64 fault decoder probe passed",
     "Ps: init ELF mapped",
     "VirtIO block: live read-only boot disk ready",
+    DATA_VOLUME_READY,
+    "FAT: malformed media rejected safely",
     "VirtIO keyboard: MMIO input ready",
+    "VirtIO pointer: absolute input ready",
+    "[desktop] EL0 desktop ready",
+    "[desktop] graphics and event contract validated",
+    "[desktop] isolated process access denied",
+    "[desktop] graphics claim release validated",
+    "[desktop] bounded window and copied surface contract validated",
+    "[desktop] bounded resize and revision guard validated",
+    "[desktop] blocked window resize delivered",
+    "[desktop] window close, termination and session reset validated",
+    "[desktop] blocked window wait cancelled",
+    "Ps: external process termination cleared 1 window input wait registration(s)",
     "Ps: external current-thread termination rejected",
     "Ps: external queued-thread termination validated",
     "Ps: external completed-thread termination validated",
@@ -133,6 +186,8 @@ REQUIRED_MARKERS = (
     "Ps: external process termination cleared 1 console input wait registration(s)",
     "Console: PL011 and VirtIO input IRQs validated",
     CONSOLE_INPUT_VALIDATED,
+    "[user-shell] read-only file contract validated",
+    "[user-shell] malformed file and ELF fixtures rejected",
     USER_SHELL_READY,
     KEYBOARD_HELP_RESPONSE,
     KEYBOARD_EDIT_RESPONSE,
@@ -150,12 +205,24 @@ REQUIRED_MARKERS = (
     OVERFLOW_FOLLOWUP_RESPONSE,
     QUESTION_HELP_RESPONSE,
     BARE_ECHO_RESPONSE,
+    ROOT_FILE_LISTING,
+    ROOT_FILE_CONTENT,
+    MISSING_FILE_RESPONSE,
+    HELLO_OUTPUT,
+    PROGRAM_EXIT,
+    INVALID_PROGRAM_RESPONSE,
+    MISSING_PROGRAM_RESPONSE,
+    ROOT_DIRECTORY_LISTING,
+    SUBDIRECTORY_LISTING,
+    SUBDIRECTORY_CONTENT,
+    PROGRAM_ARGUMENT,
 )
 REQUIRED_PATTERNS = (
     ("uptime command response", UPTIME_RESPONSE),
     ("memory command response", MEM_RESPONSE),
 )
 REQUIRED_MARKER_COUNTS = {
+    "[user-init] FP/SIMD state validated": 2,
     "Ps: reaped thread": 5,
     "[user-init] EL0 fixed VM reuse validated": 2,
     "[user-init] EL0 console output contract validated": 2,
@@ -328,21 +395,132 @@ def main() -> int:
     parser.add_argument("--ovmf", type=Path, required=True)
     parser.add_argument("--ovmf-vars", type=Path, required=True)
     parser.add_argument("--image", type=Path, required=True)
+    parser.add_argument("--data-image", type=Path, required=True)
     parser.add_argument("--timeout", type=float, default=120.0)
+    parser.add_argument("--hello-image", type=Path)
     parser.add_argument("--normal-boot", action="store_true")
+    parser.add_argument("--fallback-boot", action="store_true")
+    parser.add_argument("--storage-create", action="store_true")
+    parser.add_argument("--storage-verify", action="store_true")
+    parser.add_argument("--storage-failures", action="store_true")
+    parser.add_argument("--storage-corruption", action="store_true")
+    parser.add_argument("--storage-capacity", action="store_true")
+    parser.add_argument("--storage-interrupt-create", type=int, choices=range(1, 9))
+    parser.add_argument("--storage-interrupt-verify", type=int, choices=range(1, 9))
+    parser.add_argument("--reuse-data-image", action="store_true")
+    parser.add_argument("--screenshot", type=Path)
     args = parser.parse_args()
+    boot_modes = sum((
+        args.normal_boot,
+        args.fallback_boot,
+        args.storage_create,
+        args.storage_verify,
+        args.storage_failures,
+        args.storage_corruption,
+        args.storage_capacity,
+        args.storage_interrupt_create is not None,
+        args.storage_interrupt_verify is not None,
+    ))
+    if boot_modes > 1:
+        parser.error("choose at most one boot mode")
+    storage_probe = (
+        args.storage_create
+        or args.storage_verify
+        or args.storage_failures
+        or args.storage_corruption
+        or args.storage_capacity
+        or args.storage_interrupt_create is not None
+        or args.storage_interrupt_verify is not None
+    )
+    if args.reuse_data_image and not storage_probe:
+        parser.error("--reuse-data-image requires a storage probe")
+    if not args.normal_boot and not args.fallback_boot and not storage_probe and args.hello_image is None:
+        parser.error("--hello-image is required for the smoke probe boot")
 
-    required_markers = (
-        (USER_SHELL_READY, TERMINAL_PROMPT, KEYBOARD_HELP_RESPONSE, NORMAL_BOOT_SERIAL_RESPONSE)
-        if args.normal_boot else REQUIRED_MARKERS
-    )
-    keyboard_steps = (
-        ((USER_SHELL_READY, ("h", "e", "l", "p", "ret")),)
-        if args.normal_boot else KEYBOARD_STEPS
-    )
-    serial_steps = (
-        ((KEYBOARD_HELP_RESPONSE, b"echo normalboot\r"),)
-        if args.normal_boot else SERIAL_STEPS
+    if args.storage_create:
+        required_markers = (DATA_VOLUME_READY, DATA_VOLUME_TRANSACTION_READY)
+        keyboard_steps = ()
+        serial_steps = ()
+    elif args.storage_verify:
+        required_markers = (DATA_VOLUME_READY, DATA_VOLUME_PERSISTENCE_READY)
+        keyboard_steps = ()
+        serial_steps = ()
+    elif args.storage_failures:
+        required_markers = (DATA_VOLUME_READY, DATA_VOLUME_FAILURE_READY)
+        keyboard_steps = ()
+        serial_steps = ()
+    elif args.storage_corruption:
+        required_markers = (DATA_VOLUME_READY, DATA_VOLUME_CORRUPTION_READY)
+        keyboard_steps = ()
+        serial_steps = ()
+    elif args.storage_capacity:
+        required_markers = (DATA_VOLUME_READY, DATA_VOLUME_CAPACITY_READY)
+        keyboard_steps = ()
+        serial_steps = ()
+    elif args.storage_interrupt_create is not None:
+        required_markers = (
+            DATA_VOLUME_READY,
+            storage_interrupt_marker(args.storage_interrupt_create),
+        )
+        keyboard_steps = ()
+        serial_steps = ()
+    elif args.storage_interrupt_verify is not None:
+        required_markers = (
+            DATA_VOLUME_READY,
+            storage_interrupt_marker(args.storage_interrupt_verify, recovery=True),
+        )
+        keyboard_steps = ()
+        serial_steps = ()
+    elif args.fallback_boot:
+        required_markers = (
+            DATA_VOLUME_READY,
+            USER_SHELL_READY,
+            "[desktop] EL0 desktop ready",
+            FALLBACK_PROBE_RELEASE,
+            FALLBACK_READY,
+            KEYBOARD_HELP_RESPONSE,
+            FALLBACK_SERIAL_RESPONSE,
+        )
+        keyboard_steps = ((FALLBACK_READY, ("h", "e", "l", "p", "ret")),)
+        serial_steps = ((KEYBOARD_HELP_RESPONSE, b"echo fallbackserial\r"),)
+    elif args.normal_boot:
+        required_markers = (
+            DATA_VOLUME_READY,
+            USER_SHELL_READY,
+            "[desktop] EL0 desktop ready",
+            TERMINAL_PROMPT,
+            KEYBOARD_HELP_RESPONSE,
+            NORMAL_BOOT_SERIAL_RESPONSE,
+            ROOT_FILE_LISTING,
+            ROOT_FILE_CONTENT,
+            HELLO_OUTPUT,
+            PROGRAM_EXIT,
+            INVALID_PROGRAM_RESPONSE,
+            MISSING_PROGRAM_RESPONSE,
+            ROOT_DIRECTORY_LISTING,
+            SUBDIRECTORY_LISTING,
+            SUBDIRECTORY_CONTENT,
+            PROGRAM_ARGUMENT,
+        )
+        keyboard_steps = ((USER_SHELL_READY, ("h", "e", "l", "p", "ret")),)
+        serial_steps = (
+            (KEYBOARD_HELP_RESPONSE, b"echo normalboot\r"),
+            (NORMAL_BOOT_SERIAL_RESPONSE, b"ls\r"),
+            (ROOT_FILE_LISTING, b"cat README.TXT\r"),
+            (ROOT_FILE_CONTENT, b"run HELLO.ELF\r"),
+            (PROGRAM_EXIT, b"run README.TXT\r"),
+            (INVALID_PROGRAM_RESPONSE, b"run NOFILE.ELF\r"),
+            (MISSING_PROGRAM_RESPONSE, b"ls DOCS\r"),
+            (SUBDIRECTORY_LISTING, b"cat DOCS/NOTE.TXT\r"),
+            (SUBDIRECTORY_CONTENT, b"run BIN/HELLO.ELF world\r"),
+        )
+    else:
+        required_markers = (DATA_VOLUME_READY,) + REQUIRED_MARKERS
+        keyboard_steps = KEYBOARD_STEPS
+        serial_steps = SERIAL_STEPS
+    active_failure_markers = tuple(
+        marker for marker in FAILURE_MARKERS
+        if not (args.fallback_boot and marker == "Ps: EL0 shell exited")
     )
 
     with tempfile.TemporaryDirectory(prefix="cantaya-smoke-") as directory:
@@ -353,14 +531,43 @@ def main() -> int:
         # Give this headless guest private copies so the smoke test can boot.
         vars_copy = Path(directory) / "ovmf-vars.fd"
         image_copy = Path(directory) / "cantaya.img"
+        data_image_copy = args.data_image if args.reuse_data_image else Path(directory) / "cantaya-data.img"
         shutil.copyfile(args.ovmf_vars, vars_copy)
         shutil.copyfile(args.image, image_copy)
-        if not args.normal_boot:
-            smoke_flag = Path(directory) / "SMOKE.FLG"
-            smoke_flag.write_bytes(b"console-input-probe\n")
+        if not args.reuse_data_image:
+            shutil.copyfile(args.data_image, data_image_copy)
+        if not args.normal_boot and not args.fallback_boot and not storage_probe:
+            prepare_fixtures(image_copy, args.hello_image, Path(directory))
+        if not args.normal_boot and not storage_probe:
+            flag_name = "FALLBACK.FLG" if args.fallback_boot else "SMOKE.FLG"
+            smoke_flag = Path(directory) / flag_name
+            smoke_flag.write_bytes(b"fallback-probe\n" if args.fallback_boot else b"console-input-probe\n")
             subprocess.run(
                 ["mcopy", "-i", str(image_copy), str(smoke_flag),
-                 "::/EFI/CantayaOS/SMOKE.FLG"],
+                 f"::/EFI/CantayaOS/{flag_name}"],
+                check=True,
+                capture_output=True,
+            )
+        if storage_probe:
+            if args.storage_interrupt_create is not None:
+                flag_name = "STORINT.FLG"
+                flag_contents = str(args.storage_interrupt_create).encode()
+            elif args.storage_interrupt_verify is not None:
+                flag_name = "STORRCV.FLG"
+                flag_contents = str(args.storage_interrupt_verify).encode()
+            else:
+                flag_name = (
+                    "STORCRT.FLG" if args.storage_create else
+                    "STORVRF.FLG" if args.storage_verify else
+                    "STORCOR.FLG" if args.storage_corruption else
+                    "STORCAP.FLG" if args.storage_capacity else
+                    "STORFLT.FLG"
+                )
+                flag_contents = b"storage-probe\n"
+            storage_flag = Path(directory) / flag_name
+            storage_flag.write_bytes(flag_contents)
+            subprocess.run(
+                ["mcopy", "-i", str(image_copy), str(storage_flag), f"::/EFI/CantayaOS/{storage_flag.name}"],
                 check=True,
                 capture_output=True,
             )
@@ -371,12 +578,15 @@ def main() -> int:
             "-m", "512M",
             "-device", "ramfb",
             "-device", "virtio-keyboard-device",
+            "-device", "virtio-tablet-device",
             "-nic", "none",
             "-drive", f"if=pflash,format=raw,file={args.ovmf},readonly=on",
             "-drive", f"if=pflash,format=raw,file={vars_copy}",
             "-drive", f"if=none,format=raw,file={image_copy},id=cantaya-disk",
+            "-drive", f"if=none,format=raw,file={data_image_copy},id=cantaya-data-disk",
             "-global", "virtio-mmio.force-legacy=false",
             "-device", "virtio-blk-device,drive=cantaya-disk",
+            "-device", "virtio-blk-device,drive=cantaya-data-disk",
             "-chardev", f"socket,path={serial_path},id=serial0,server=on,wait=on",
             "-serial", "chardev:serial0",
             "-qmp", f"unix:{monitor_path},server=on,wait=off",
@@ -406,7 +616,7 @@ def main() -> int:
             while time.monotonic() < deadline:
                 if serial_log.exists():
                     output = serial_log.read_text(errors="replace")
-                    if any(marker in output for marker in FAILURE_MARKERS):
+                    if any(marker in output for marker in active_failure_markers):
                         break
                     if output.count("Unknown command:") > 1:
                         break
@@ -437,24 +647,54 @@ def main() -> int:
                         except (OSError, RuntimeError) as error:
                             input_error = str(error)
                             break
-                    full_contract_passed = args.normal_boot or (
+                    full_contract_passed = storage_probe or args.fallback_boot or (
+                        output.count(PROGRAM_EXIT) == 2 and
+                        output.count(HELLO_OUTPUT) == 2 and
+                        (args.normal_boot or (
                         all(output.count(marker) >= count
                             for marker, count in REQUIRED_MARKER_COUNTS.items())
                         and all(pattern.search(output) for _, pattern in REQUIRED_PATTERNS)
                         and output.count("Unknown command:") == 1
+                        ))
                     )
                     if all(marker in output for marker in required_markers) and full_contract_passed:
+                        if not storage_probe:
+                            try:
+                                if keyboard_stream is None:
+                                    keyboard_monitor, keyboard_stream = connect_keyboard_monitor(monitor_path)
+                                if args.normal_boot:
+                                    check_desktop(keyboard_stream, qmp_execute, Path(directory), serial_log,
+                                                  deadline, args.screenshot)
+                                elif not args.fallback_boot:
+                                    frame = screenshot(
+                                        keyboard_stream,
+                                        qmp_execute,
+                                        Path(directory) / "contract.ppm",
+                                    )
+                                    if frame.color(0, 0) != 0x081424:
+                                        raise RuntimeError(
+                                            "Rejected cross-page blit partially changed the framebuffer"
+                                        )
+                            except (OSError, ValueError, RuntimeError) as error:
+                                input_error = str(error)
                         break
                 if process.poll() is not None:
                     break
                 time.sleep(0.1)
         finally:
+            frame_path = Path(directory) / "desktop.ppm"
+            if args.screenshot is not None and frame_path.exists():
+                args.screenshot.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(frame_path, args.screenshot)
             if keyboard_stream is not None:
                 keyboard_stream.close()
             if keyboard_monitor is not None:
                 keyboard_monitor.close()
             if process.poll() is None:
-                process.terminate()
+                if args.storage_interrupt_create is not None:
+                    process.kill()
+                else:
+                    process.terminate()
                 try:
                     process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
@@ -469,11 +709,21 @@ def main() -> int:
         if serial_log.exists():
             output = serial_log.read_text(errors="replace")
 
-    failures = [marker for marker in FAILURE_MARKERS if marker in output]
+    failures = [marker for marker in active_failure_markers if marker in output]
     missing = [marker for marker in required_markers if marker not in output]
-    if args.normal_boot:
+    if storage_probe:
+        pass
+    elif args.normal_boot or args.fallback_boot:
         if CONSOLE_INPUT_READY in output:
-            failures.append("console input probe started during normal boot")
+            failures.append("console input probe started outside its private boot")
+        if args.fallback_boot and output.count(KEYBOARD_HELP_RESPONSE) != 1:
+            failures.append("fallback keyboard help response did not occur exactly once")
+        if args.fallback_boot and output.count(FALLBACK_SERIAL_RESPONSE) != 1:
+            failures.append("fallback serial echo response did not occur exactly once")
+        if args.normal_boot and (
+            output.count(PROGRAM_EXIT) != 2 or output.count(HELLO_OUTPUT) != 2
+        ):
+            missing.append("exactly two named program executions")
     else:
         missing.extend(
             f"{marker} (expected at least {count})"
@@ -489,6 +739,8 @@ def main() -> int:
             missing.append("exactly one intentional unknown-command response")
         if output.count("\x07") != len(OVERFLOW_TEXT):
             missing.append(f"exactly {len(OVERFLOW_TEXT)} overflow bells")
+        if output.count(PROGRAM_EXIT) != 2 or output.count(HELLO_OUTPUT) != 2:
+            missing.append("exactly two named program executions")
     if failures or missing or input_error:
         print("CantayaOS QEMU smoke test failed.", file=sys.stderr)
         if input_error:
@@ -500,7 +752,18 @@ def main() -> int:
         print(output[-4000:], file=sys.stderr)
         return 1
 
-    label = "normal boot" if args.normal_boot else "QEMU smoke test"
+    label = (
+        "storage create probe" if args.storage_create else
+        "storage verify probe" if args.storage_verify else
+        "storage failure probe" if args.storage_failures else
+        "storage corruption probe" if args.storage_corruption else
+        "storage capacity probe" if args.storage_capacity else
+        "storage interruption create probe" if args.storage_interrupt_create is not None else
+        "storage interruption verify probe" if args.storage_interrupt_verify is not None else
+        "fallback boot" if args.fallback_boot else
+        "normal boot" if args.normal_boot else
+        "QEMU smoke test"
+    )
     print(f"CantayaOS {label} passed.")
     return 0
 

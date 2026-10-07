@@ -36,8 +36,24 @@ pub extern "C" fn syscall_dispatch(syscall_num: u64, regs: *mut SavedRegs) {
         NtSyscallNumber::NtReadFile
             | NtSyscallNumber::NtWriteFile
             | NtSyscallNumber::NtClearConsole
+            | NtSyscallNumber::NtQueryDisplay
+            | NtSyscallNumber::NtPresentDisplay
+            | NtSyscallNumber::NtReadDesktopEvent
+            | NtSyscallNumber::NtReadDesktopOutput
+            | NtSyscallNumber::NtCreateWindow
+            | NtSyscallNumber::NtPresentWindow
+            | NtSyscallNumber::NtReadWindowEvent
+            | NtSyscallNumber::NtWaitWindowEvent
+            | NtSyscallNumber::NtCloseWindow
+            | NtSyscallNumber::NtEnumerateWindows
+            | NtSyscallNumber::NtCopyWindow
+            | NtSyscallNumber::NtSendWindowEvent
+            | NtSyscallNumber::NtResizeWindow
+            | NtSyscallNumber::NtQueryWindow
+            | NtSyscallNumber::NtAcknowledgeWindows
             | NtSyscallNumber::NtWaitForConsoleInput
-    ) {
+    ) && !(number == NtSyscallNumber::NtQuerySystemInfo && crate::desktop::is_active())
+    {
         log::trace!("SVC: {:?} (num={:#x})", number, syscall_num);
     }
 
@@ -52,10 +68,27 @@ pub extern "C" fn syscall_dispatch(syscall_num: u64, regs: *mut SavedRegs) {
         NtSyscallNumber::NtAllocateVirtual => nt::sys_allocate_virtual(regs),
         NtSyscallNumber::NtFreeVirtual => nt::sys_free_virtual(regs),
         NtSyscallNumber::NtCreateFile => nt::sys_create_file(regs),
+        NtSyscallNumber::NtQueryRootDirectory => nt::sys_query_root_directory(regs),
+        NtSyscallNumber::NtQueryDirectory => nt::sys_query_directory(regs),
         NtSyscallNumber::NtClose => nt::sys_close(regs),
         NtSyscallNumber::NtQuerySystemInfo => nt::sys_query_system_info(regs),
         NtSyscallNumber::NtTerminateProcess => nt::sys_terminate_process(regs),
         NtSyscallNumber::NtTerminateThread => nt::sys_terminate_thread(regs),
+        NtSyscallNumber::NtQueryDisplay => crate::desktop::sys_query(regs),
+        NtSyscallNumber::NtPresentDisplay => crate::desktop::sys_present(regs),
+        NtSyscallNumber::NtReadDesktopEvent => crate::desktop::sys_read_event(regs),
+        NtSyscallNumber::NtReadDesktopOutput => crate::desktop::sys_read_output(regs),
+        NtSyscallNumber::NtCreateWindow => crate::windows::sys_create(regs),
+        NtSyscallNumber::NtPresentWindow => crate::windows::sys_present(regs),
+        NtSyscallNumber::NtReadWindowEvent => crate::windows::sys_read_event(regs),
+        NtSyscallNumber::NtWaitWindowEvent => crate::windows::sys_wait_event(regs),
+        NtSyscallNumber::NtCloseWindow => crate::windows::sys_close(regs),
+        NtSyscallNumber::NtEnumerateWindows => crate::windows::sys_enumerate(regs),
+        NtSyscallNumber::NtCopyWindow => crate::windows::sys_copy(regs),
+        NtSyscallNumber::NtSendWindowEvent => crate::windows::sys_send_event(regs),
+        NtSyscallNumber::NtResizeWindow => crate::windows::sys_resize(regs),
+        NtSyscallNumber::NtQueryWindow => crate::windows::sys_query(regs),
+        NtSyscallNumber::NtAcknowledgeWindows => crate::windows::sys_acknowledge(regs),
         NtSyscallNumber::Unknown => {
             log::warn!("Unknown syscall {:#x}", syscall_num);
             0xC000_0001u64 // STATUS_UNSUCCESSFUL

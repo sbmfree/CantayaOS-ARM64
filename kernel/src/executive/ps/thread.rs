@@ -33,6 +33,10 @@ struct ThreadCompletion {
 pub enum WaitTarget {
     Process(Arc<EProcess>),
     Thread(Arc<ThreadObject>),
+    WindowEvent {
+        process: Arc<EProcess>,
+        id: u64,
+    },
     ConsoleInput {
         process: Arc<EProcess>,
         generation: u64,
@@ -43,6 +47,9 @@ impl WaitTarget {
     pub fn observe_or_register_waiter(&self, waiter: usize) -> Option<i32> {
         match self {
             Self::Process(process) => process.observe_or_register_waiter(waiter),
+            Self::WindowEvent { process, id } => {
+                crate::windows::observe_or_register_waiter(process, *id, waiter)
+            }
             Self::Thread(thread) => thread.observe_or_register_waiter(waiter),
             Self::ConsoleInput {
                 process,
@@ -54,6 +61,7 @@ impl WaitTarget {
     pub fn cancel_waiter(&self, waiter: usize) {
         match self {
             Self::Process(process) => process.cancel_waiter(waiter),
+            Self::WindowEvent { id, .. } => crate::windows::cancel_waiter(*id, waiter),
             Self::Thread(thread) => thread.cancel_waiter(waiter),
             Self::ConsoleInput { .. } => crate::console::cancel_waiter(waiter),
         }
@@ -113,26 +121,32 @@ impl ThreadObject {
 
 /// AArch64 callee-saved register context.
 /// Layout MUST match the offsets in `boot.s` `arch_context_switch`.
-#[repr(C)]
+#[repr(C, align(16))]
 pub struct ThreadContext {
-    pub x19: u64,    // offset 0
-    pub x20: u64,    // offset 8
-    pub x21: u64,    // offset 16
-    pub x22: u64,    // offset 24
-    pub x23: u64,    // offset 32
-    pub x24: u64,    // offset 40
-    pub x25: u64,    // offset 48
-    pub x26: u64,    // offset 56
-    pub x27: u64,    // offset 64
-    pub x28: u64,    // offset 72
-    pub x29: u64,    // fp  offset 80
-    pub x30: u64,    // lr  offset 88 — return address for resume
-    pub sp: u64,     // offset 96
-    pub elr: u64,    // offset 104 — EL0 return address (for user threads)
-    pub spsr: u64,   // offset 112
-    pub daif: u64,   // offset 120 — interrupt mask; 0 = all unmasked (IRQs on)
-    pub sp_el0: u64, // offset 128 — per-thread EL0 user stack pointer
+    pub x19: u64,        // offset 0
+    pub x20: u64,        // offset 8
+    pub x21: u64,        // offset 16
+    pub x22: u64,        // offset 24
+    pub x23: u64,        // offset 32
+    pub x24: u64,        // offset 40
+    pub x25: u64,        // offset 48
+    pub x26: u64,        // offset 56
+    pub x27: u64,        // offset 64
+    pub x28: u64,        // offset 72
+    pub x29: u64,        // fp  offset 80
+    pub x30: u64,        // lr  offset 88 — return address for resume
+    pub sp: u64,         // offset 96
+    pub elr: u64,        // offset 104 — EL0 return address (for user threads)
+    pub spsr: u64,       // offset 112
+    pub daif: u64,       // offset 120 — interrupt mask; 0 = all unmasked (IRQs on)
+    pub sp_el0: u64,     // offset 128 — per-thread EL0 user stack pointer
+    pub simd: [u128; 8], // offset 144 — q8..q15, including ABI callee-saved lanes
+    pub fpcr: u64,       // offset 272
+    pub fpsr: u64,       // offset 280
 }
+
+const _: () = assert!(core::mem::offset_of!(ThreadContext, simd) == 144);
+const _: () = assert!(core::mem::offset_of!(ThreadContext, fpcr) == 272);
 
 impl ThreadContext {
     pub fn new_kernel(entry: fn(), stack_top: u64) -> Self {
@@ -154,6 +168,9 @@ impl ThreadContext {
             spsr: 0x3C5,
             daif: 0x40, // FIQ masked (bit6=1), IRQ unmasked (bit7=0)
             sp_el0: 0,
+            simd: [0; 8],
+            fpcr: 0,
+            fpsr: 0,
         }
     }
 
@@ -176,6 +193,9 @@ impl ThreadContext {
             spsr: 0x3C5,
             daif: 0x40, // FIQ masked (bit6=1), IRQ unmasked (bit7=0)
             sp_el0: user_stack_top,
+            simd: [0; 8],
+            fpcr: 0,
+            fpsr: 0,
         }
     }
 }

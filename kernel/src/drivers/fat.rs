@@ -13,10 +13,28 @@ pub const SECTOR_SIZE: usize = 512;
 pub trait BlockDevice {
     fn sector_count(&self) -> u64;
     fn read_sector(&self, sector: u64, output: &mut [u8; SECTOR_SIZE]) -> bool;
+
+    fn write_sector(&self, _sector: u64, _input: &[u8; SECTOR_SIZE]) -> bool {
+        false
+    }
+
+    fn flush(&self) -> bool {
+        false
+    }
 }
 
 const ATTR_DIRECTORY: u8 = 0x10;
 const ATTR_LONG_NAME: u8 = 0x0F;
+const ATTR_VOLUME_ID: u8 = 0x08;
+const MAX_DIRECTORY_CLUSTERS: usize = 256;
+
+#[derive(Clone, Copy)]
+pub struct RootFileEntry {
+    pub name83: [u8; 11],
+    pub size: u32,
+    pub cluster: u32,
+    pub is_directory: bool,
+}
 
 /// FAT32 reader backed by a live block device instead of retained boot bytes.
 pub struct LiveFatVolume<'a> {
@@ -30,6 +48,53 @@ pub struct LiveFatVolume<'a> {
 }
 
 impl<'a> LiveFatVolume<'a> {
+    /// Return one root entry by ordinal. `None` means end of directory.
+    pub fn root_file_at(&self, index: usize) -> Option<RootFileEntry> {
+        self.directory_entry_at(self.root_cluster, index)
+    }
+
+    pub fn directory_entry_at(&self, start: u32, index: usize) -> Option<RootFileEntry> {
+        let mut cluster = start;
+        let mut sector = [0u8; SECTOR_SIZE];
+        let mut ordinal = 0usize;
+        let mut seen = [0u32; MAX_DIRECTORY_CLUSTERS];
+        for visited in 0..MAX_DIRECTORY_CLUSTERS.min(self.last_cluster.saturating_sub(1) as usize) {
+            if seen[..visited].contains(&cluster) {
+                return None;
+            }
+            seen[visited] = cluster;
+            let cluster_sector = self.cluster_to_sector(cluster)?;
+            for sector_index in 0..self.sectors_per_cluster {
+                self.read_sector(cluster_sector + sector_index, &mut sector)
+                    .then_some(())?;
+                for entry in sector.chunks_exact(32) {
+                    if entry[0] == 0x00 {
+                        return None;
+                    }
+                    if entry[0] == 0xE5
+                        || entry[11] == ATTR_LONG_NAME
+                        || entry[11] & ATTR_VOLUME_ID != 0
+                        || entry[0] == b'.'
+                    {
+                        continue;
+                    }
+                    if ordinal == index {
+                        let mut name83 = [0u8; 11];
+                        name83.copy_from_slice(&entry[..11]);
+                        return Some(RootFileEntry {
+                            name83,
+                            size: read_u32(entry, 28)?,
+                            cluster: Self::entry_cluster(entry)?,
+                            is_directory: entry[11] & ATTR_DIRECTORY != 0,
+                        });
+                    }
+                    ordinal += 1;
+                }
+            }
+            cluster = self.next_cluster(cluster)?;
+        }
+        None
+    }
     /// Open a FAT32 volume without reading more than `max_sectors` from the
     /// kernel-controlled block device.
     pub fn open_bounded(device: &'a dyn BlockDevice, max_sectors: u64) -> Option<Self> {
@@ -97,24 +162,53 @@ impl<'a> LiveFatVolume<'a> {
         buffer: &mut alloc::vec::Vec<u8>,
         max_size: usize,
     ) -> bool {
-        let Some((mut cluster, size)) = self.find_in_root(name83) else {
+        self.read_file_from_directory_to_buf_bounded(self.root_cluster, name83, buffer, max_size)
+    }
+
+    pub fn read_file_from_directory_to_buf_bounded(
+        &self,
+        directory: u32,
+        name83: &[u8; 11],
+        buffer: &mut alloc::vec::Vec<u8>,
+        max_size: usize,
+    ) -> bool {
+        let Some(entry) = self.find_in_directory(directory, name83) else {
             return false;
         };
-        let Ok(size) = usize::try_from(size) else {
+        if entry.is_directory {
+            return false;
+        }
+        let mut cluster = entry.cluster;
+        let Ok(size) = usize::try_from(entry.size) else {
             return false;
         };
         if size > max_size {
             return false;
         }
 
-        buffer.clear();
-        buffer.reserve(size);
+        let mut contents = alloc::vec::Vec::new();
+        if contents.try_reserve_exact(size).is_err() {
+            return false;
+        }
         if size == 0 {
+            *buffer = contents;
             return true;
         }
         let mut sector = [0u8; SECTOR_SIZE];
         let mut remaining = size;
+        let mut seen = alloc::vec::Vec::new();
+        let cluster_bytes = self.sectors_per_cluster as usize * SECTOR_SIZE;
+        if seen
+            .try_reserve_exact((size + cluster_bytes - 1) / cluster_bytes)
+            .is_err()
+        {
+            return false;
+        }
         for _ in 0..self.last_cluster.saturating_sub(1) {
+            if seen.contains(&cluster) {
+                return false;
+            }
+            seen.push(cluster);
             let Some(cluster_sector) = self.cluster_to_sector(cluster) else {
                 return false;
             };
@@ -123,9 +217,10 @@ impl<'a> LiveFatVolume<'a> {
                     return false;
                 }
                 let take = remaining.min(SECTOR_SIZE);
-                buffer.extend_from_slice(&sector[..take]);
+                contents.extend_from_slice(&sector[..take]);
                 remaining -= take;
                 if remaining == 0 {
+                    *buffer = contents;
                     return true;
                 }
             }
@@ -137,10 +232,20 @@ impl<'a> LiveFatVolume<'a> {
         false
     }
 
-    fn find_in_root(&self, name83: &[u8; 11]) -> Option<(u32, u32)> {
-        let mut cluster = self.root_cluster;
+    pub fn find_directory(&self, name83: &[u8; 11]) -> Option<u32> {
+        let entry = self.find_in_directory(self.root_cluster, name83)?;
+        entry.is_directory.then_some(entry.cluster)
+    }
+
+    fn find_in_directory(&self, start: u32, name83: &[u8; 11]) -> Option<RootFileEntry> {
+        let mut cluster = start;
         let mut sector = [0u8; SECTOR_SIZE];
-        for _ in 0..self.last_cluster.saturating_sub(1) {
+        let mut seen = [0u32; MAX_DIRECTORY_CLUSTERS];
+        for visited in 0..MAX_DIRECTORY_CLUSTERS.min(self.last_cluster.saturating_sub(1) as usize) {
+            if seen[..visited].contains(&cluster) {
+                return None;
+            }
+            seen[visited] = cluster;
             let cluster_sector = self.cluster_to_sector(cluster)?;
             for sector_index in 0..self.sectors_per_cluster {
                 if !self.read_sector(cluster_sector + sector_index, &mut sector) {
@@ -152,21 +257,30 @@ impl<'a> LiveFatVolume<'a> {
                     }
                     if entry[0] == 0xE5
                         || entry[11] == ATTR_LONG_NAME
-                        || entry[11] & ATTR_DIRECTORY != 0
+                        || entry[11] & ATTR_VOLUME_ID != 0
                     {
                         continue;
                     }
                     if &entry[..11] != name83 {
                         continue;
                     }
-                    let cluster_hi = read_u16(entry, 20)? as u32;
-                    let cluster_lo = read_u16(entry, 26)? as u32;
-                    return Some(((cluster_hi << 16) | cluster_lo, read_u32(entry, 28)?));
+                    return Some(RootFileEntry {
+                        name83: *name83,
+                        size: read_u32(entry, 28)?,
+                        cluster: Self::entry_cluster(entry)?,
+                        is_directory: entry[11] & ATTR_DIRECTORY != 0,
+                    });
                 }
             }
             cluster = self.next_cluster(cluster)?;
         }
         None
+    }
+
+    fn entry_cluster(entry: &[u8]) -> Option<u32> {
+        let high = read_u16(entry, 20)? as u32;
+        let low = read_u16(entry, 26)? as u32;
+        Some((high << 16) | low)
     }
 
     fn cluster_to_sector(&self, cluster: u32) -> Option<u64> {
@@ -215,4 +329,81 @@ fn read_u32(bytes: &[u8], offset: usize) -> Option<u32> {
     Some(u32::from_le_bytes(
         bytes.get(offset..offset.checked_add(4)?)?.try_into().ok()?,
     ))
+}
+
+/// Private QEMU smoke probe using faulted views of the live boot disk.
+pub fn probe_malformed_media(device: &dyn BlockDevice, max_sectors: u64) -> bool {
+    struct FaultedDevice<'a> {
+        base: &'a dyn BlockDevice,
+        corrupt_boot: u8,
+        unreadable_sector: Option<u64>,
+    }
+
+    impl BlockDevice for FaultedDevice<'_> {
+        fn sector_count(&self) -> u64 {
+            self.base.sector_count()
+        }
+
+        fn read_sector(&self, sector: u64, output: &mut [u8; SECTOR_SIZE]) -> bool {
+            if self.unreadable_sector == Some(sector) || !self.base.read_sector(sector, output) {
+                return false;
+            }
+            if sector == 0 {
+                match self.corrupt_boot {
+                    1 => output[11..13].fill(0),
+                    2 => output[44..48].fill(0xFF),
+                    _ => {}
+                }
+            }
+            true
+        }
+    }
+
+    for corrupt_boot in [1, 2] {
+        if LiveFatVolume::open_bounded(
+            &FaultedDevice {
+                base: device,
+                corrupt_boot,
+                unreadable_sector: None,
+            },
+            max_sectors,
+        )
+        .is_some()
+        {
+            return false;
+        }
+    }
+
+    let mut boot = [0u8; SECTOR_SIZE];
+    if !device.read_sector(0, &mut boot) {
+        return false;
+    }
+    let Some(reserved) = read_u16(&boot, 14).map(u64::from) else {
+        return false;
+    };
+    let Some(fat_sectors) = read_u32(&boot, 36).map(u64::from) else {
+        return false;
+    };
+    let Some(root_cluster) = read_u32(&boot, 44).map(u64::from) else {
+        return false;
+    };
+    let sectors_per_cluster = u64::from(boot[13]);
+    let Some(root_sector) = reserved
+        .checked_add(u64::from(boot[16]).saturating_mul(fat_sectors))
+        .and_then(|start| {
+            root_cluster
+                .checked_sub(2)
+                .and_then(|cluster| cluster.checked_mul(sectors_per_cluster))
+                .and_then(|offset| start.checked_add(offset))
+        })
+    else {
+        return false;
+    };
+    let faulted = FaultedDevice {
+        base: device,
+        corrupt_boot: 0,
+        unreadable_sector: Some(root_sector),
+    };
+    LiveFatVolume::open_bounded(&faulted, max_sectors)
+        .is_some_and(|volume| volume.root_file_at(0).is_none())
 }
