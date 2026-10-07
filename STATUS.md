@@ -2,13 +2,15 @@
 
 **Project:** CantayaOS by CantayaTech
 **Target:** AArch64, UEFI, QEMU `virt` with OVMF
-**Last verified:** 2026-09-29
+**Last verified:** 2026-10-07
 
 ## Current Milestone
 
-**Objective:** Wake blocked EL0 console readers from PL011 RX and VirtIO
-keyboard IRQs without System-thread readiness polling, while retaining
-cancellation, bounded reads, and the EL1 fallback prompt.
+**Objective:** Maintain the verified private VirtIO data-disk protocol for
+durable root-file creation without changing the read-only boot ESP. The
+protocol remains internal to private probes; do not expose a write syscall or
+shell command until a separate public interface and contract are selected.
+Keep the current three-boot smoke contract.
 
 ## Verified Baseline For Planning
 
@@ -22,7 +24,7 @@ cancellation, bounded reads, and the EL1 fallback prompt.
   reaping.
 - The two boot-loaded `init.elf` processes remain a context-switch validation
   workload. After both exit, the System thread redraws the framebuffer and
-  starts a controlled `init.elf` copy in EL0 shell mode. That process owns
+  starts a controlled `init.elf` copy in EL0 shell mode with its desktop. That process owns
   console input, parses the existing built-in commands, and writes the terminal
   through `NtWriteFile(-1)`; the EL1 prompt is retained only as a fallback if
   the process exits or cannot start. The terminal accepts PL011 serial and
@@ -30,6 +32,26 @@ cancellation, bounded reads, and the EL1 fallback prompt.
   demonstration loops are disabled.
   QEMU uses 1024x768 GOP mode when available. Keyboard decoding currently
   covers US ASCII, Shift, Caps Lock, Backspace, Enter, Ctrl-U, and Ctrl-L.
+- The EL0 shell now starts a desktop on supported RGB/BGR displays. Its private
+  buffers compose a background, taskbar, mouse cursor, draggable terminal and
+  read-only Files windows. All window types resize and minimize; Terminal
+  reflows visible text, Files adjusts its viewport, and Paint preserves hidden
+  strokes across shrink/grow and retains its process when minimized. QEMU supplies
+  a VirtIO absolute tablet alongside the keyboard. Bounded graphics/input/output syscalls share console ownership;
+  closing input or falling back to EL1 resets the graphical session. The
+  ordinary smoke boot validates interactions, actual framebuffer pixels, and
+  recovery after a forced read timeout. The block reader retains pending DMA
+  buffers until completion rather than reusing a timed-out request.
+  Independent apps now own up to four bounded copied surfaces, receive routed
+  focus/key/pointer input, and block on scheduler-managed window waits. Paint
+  runs as a separate ELF and launches from the taskbar, Files or Terminal.
+  Graphical terminal launches run asynchronously and release completion handles
+  through zero-tick polling. Window close, process exit and desktop reset clean
+  up surfaces and wake or cancel blocked waits. All FP/SIMD state is preserved
+  across exceptions; context switches retain callee-saved vectors and new EL0
+  processes start with cleared FP state. Regression probes hold distinct patterns
+  in all 32 vector registers across syscalls and timer ticks.
+  See [docs/desktop.md](docs/desktop.md) for controls, ABI and limits.
 - `make smoke` now uses a private QMP monitor socket to send `help` through the
   VirtIO keyboard after terminal startup and requires its command response in
   the serial log. It also clears unfinished text with Ctrl-U, corrects a later
@@ -64,7 +86,7 @@ cancellation, bounded reads, and the EL1 fallback prompt.
   and unsupported bytes before output; accepted ASCII text reaches UART and
   framebuffer. Both init processes verify rejection and successful output in
   QEMU smoke. The pseudo-handle cannot be closed.
-- `NtReadFile` accepts only the fixed `-2` console-input pseudo-handle, a
+- `NtReadFile(-2)` accepts the fixed console-input pseudo-handle, a
   1–128-byte writable buffer, and a writable `u64` result count. It validates
   both full ranges before claiming input, returns `STATUS_TIMEOUT` without
   changing either output when no byte is ready, and excludes other EL0
@@ -83,6 +105,32 @@ cancellation, bounded reads, and the EL1 fallback prompt.
   readiness, then externally terminates a child blocked in the console wait.
   It requires the cancellation log, reclaims input without a stale waiter,
   and retains the full terminal and lifecycle contract plus ordinary boot.
+- A separate private fallback boot lets the EL0 shell claim console input and
+  exit deliberately. The EL1 prompt then accepts a VirtIO keyboard `help` and
+  a PL011 `echo fallbackserial`; the unmodified boot retains EL0 ownership.
+- EL0 opens bounded read-only FAT files through process-local typed handles.
+  `NtReadFile` advances a per-handle offset and writes a zero count at EOF.
+  Root and one-level 8.3 directory queries power shell `ls`; `cat` reads text
+  files through the same handle path. The private probe checks invalid
+  pointers and names, EOF, directory end, and stale-handle rejection after
+  slot reuse.
+- `NtCreateProcess` selector two loads a named root or one-level 8.3 ELF via
+  the I/O-owned FAT reader and the existing ELF validation path. An optional
+  printable argument string of at most 64 bytes is copied into child-owned
+  memory and passed in initial EL0 `x1`. The shell waits for the process and
+  reports its exit status. Smoke checks root and subdirectory `HELLO.ELF`, its
+  `world` argument, missing and invalid images, and subdirectory text reads.
+- The private smoke boot injects two invalid FAT geometry fields and an
+  unreadable root sector through a faulted view of the live block device.
+  The bounded reader rejects each case without a kernel panic; broader
+  malformed-chain and ELF fixtures now live on its private disk copy.
+- The private disk copy adds a cyclic `BROKEN.TXT` FAT chain, an ELF with a bad
+  magic byte, and an ELF with a writable executable segment. EL0 verifies that
+  failed file and process creation leave their output handles unchanged, then
+  continues to open and run valid files. The FAT reader rejects repeated file
+  clusters, bounds directory traversal, and publishes a file buffer only after
+  the full chain succeeds. Smoke requires exactly two intended `HELLO.ELF`
+  executions and all three boot paths.
 - EL0 `help`/`?`, `info`, `uptime`, `mem`, `echo`, and `clear` preserve the
   earlier terminal responses and editing behavior. A fixed system-information
   class exposes elapsed 100 Hz ticks; an input-owner-only clear service redraws
@@ -161,8 +209,8 @@ cancellation, bounded reads, and the EL1 fallback prompt.
   stays unchanged; the next valid thread receives the exact next handle
   generation, completes with a checked status, and releases its stack. Smoke
   requires two entry-and-stack preflight markers.
-- Both init processes reject invalid timeout pointers, zero and out-of-range
-  timeout values, and read-only or unmapped completion outputs for live thread
+- Both init processes reject invalid timeout pointers and out-of-range
+  timeout values, and poll live handles with a zero-tick timeout, and read-only or unmapped completion outputs for live thread
   and process handles. Bad timeout arguments preserve their passed output
   sentinel; bad output pointers return `STATUS_ACCESS_VIOLATION`. A valid
   two-tick wait times out without writing its output; termination followed by an
@@ -188,9 +236,9 @@ cancellation, bounded reads, and the EL1 fallback prompt.
 - The scheduler tracks typed process and thread completion waiters separately
   from ready threads. Wake, timeout, thread termination, and process
   termination remove that tracking before a raw thread record can be reaped.
-- `NtCreateProcess` can load only the retained boot-validated `init.elf` or the
-  fixed, kernel-owned live VirtIO/FAT `CHILD.ELF` source. Both follow the same
-  ELF and address-space validation path.
+- `NtCreateProcess` can load the retained boot-validated `init.elf`, the fixed
+  kernel-owned live VirtIO/FAT `CHILD.ELF`, or a bounded named FAT image. All
+  three use the same ELF and address-space validation path.
 
 Detailed guarantees and validation evidence live in
 [docs/verified-features.md](docs/verified-features.md). Stable subsystem design
@@ -198,11 +246,23 @@ lives in [docs/architecture.md](docs/architecture.md).
 
 ## Latest Verified Milestone
 
-PL011 RX and VirtIO keyboard interrupts now wake the blocked EL0 console
-reader directly. The System thread no longer checks input readiness in its
-hot loops, and no timer recheck is needed. The private smoke boot requires
-both device IRQs and retains the serial, keyboard, line-bound, cancellation,
-and lifecycle checks; a separate normal boot still verifies interactive input.
+The EL0 desktop displays a terminal and read-only file browser, handles
+structured keyboard and mouse input, and supports window focus, dragging,
+resizing, minimizing, closing and taskbar reopening. Independent EL0 applications
+now use bounded copied surfaces and routed input. Paint supports drawing, color selection and
+clearing; the graphical terminal runs programs asynchronously. `make smoke`
+retains all three boot paths and verifies window ownership, memory rejection,
+queue overflow, wait cancellation, SIMD preservation, two simultaneous apps,
+terminal responsiveness, lifecycle cleanup and actual framebuffer contents.
+Resize probes check preserved rows, zeroed growth, rejected dimensions, revision
+races and blocked app wakeup. Interaction tests cover terminal command reflow,
+Files selection/preview resizing and Paint retention through minimize/restore.
+The separate `CANTDATA` VirtIO disk now has a bounded one-cluster root-file
+create protocol with mirrored transaction records, explicit flushes, recovery,
+and data checksums. Private QEMU probes prove reboot persistence, write and
+flush failure recovery, eight durable interruption checkpoints, capacity and
+root-directory exhaustion, and FAT/directory/journal/payload corruption
+rejection. The boot ESP and all public file interfaces remain read-only.
 
 ## Latest Planning Decision
 
@@ -215,21 +275,24 @@ Terminal commands, editing, PL011 CRLF suppression, unknown-command recovery,
 and the fixed input-line capacity are checked through smoke input. GitHub
 Actions builds the project and runs the same headless QEMU smoke test on
 Ubuntu with AArch64 UEFI firmware. The tested nightly is pinned to avoid a
-newer toolchain's UEFI linker regression. Console output and input are fixed
-pseudo-handle operations, not generic file I/O. The EL1 parser remains a
+newer toolchain's UEFI linker regression. Console output remains a fixed
+pseudo-handle operation; input uses `-2` while typed read-only file handles
+share `NtReadFile`. The EL1 parser remains a
 fallback; smoke rejects unexpected fallback during the EL0 command checks.
 The smoke harness uses explicit QMP key down/up events and a private serial
 socket, with bounded pacing for the PL011 line-capacity probe. A QEMU stall
 diagnostic exposed a single-core IRQ re-entry into the process-completion
 mutex; completion access now masks local IRQs.
+The storage review selected a separate data disk for internal transactional
+creation. [docs/storage-integrity.md](docs/storage-integrity.md) records the
+verified durability and recovery gate; public write exposure remains deferred.
 
-## Recommended Next Milestone
+## Current Milestone Detail
 
-Exercise EL1 fallback in a private smoke-only boot after deliberately ending
-the EL0 shell. Verify that the fallback reclaims serial and keyboard input,
-can run a built-in command, and does not alter the ordinary boot or exclusive
-`-2` ownership contract. Keep fault injection out of normal boots and do not
-expand image selectors or generic device/file handles.
+The separate data disk is identified by its FAT32 volume label and mounts
+independently of the boot ESP. Its bounded create protocol and all required
+private QEMU recovery tests are complete. Do not expose a write syscall until
+a future public API preserves the completed integrity contract.
 
 ### Follow-On Candidates
 
@@ -243,11 +306,12 @@ expand image selectors or generic device/file handles.
   only the supervisor-only `0x4000_0000` kernel-image alias required until the
   kernel is linked fully in the high half. EL1 support paths otherwise use
   high-half mappings.
-- `NtCreateProcess` accepts only selector zero for the kernel-owned copy of the
-  boot-validated image or selector one for the I/O-owned, bounded live VirtIO
-  FAT `CHILD.ELF` object. Do not add arbitrary file names, raw user ELF input,
-  inherited handles, command lines, or security tokens. It returns a
-  parent-owned process handle and accepts a controlled initial EL0 `x1` value.
+- `NtCreateProcess` accepts selector zero for the kernel-owned boot image,
+  selector one for the fixed I/O-owned `CHILD.ELF`, and selector two for a
+  bounded root or one-level 8.3 FAT path. Selector two copies at most 64
+  printable argument bytes to child-owned memory and passes their pointer in
+  initial EL0 `x1`. Do not add raw user ELF input, inherited handles, a general
+  command-line parser, or security tokens. It returns a parent-owned handle.
 - `NtCreateThread` is limited to the current process and requires an already
   mapped executable entry point and writable stack. Do not add suspended
   creation, priorities, APCs, or cross-process thread creation.
@@ -272,9 +336,11 @@ expand image selectors or generic device/file handles.
 - `NtAllocateVirtual` accepts only the current-process pseudo-handle. It has
   automatic first-fit reuse and page-aligned fixed placement in the dynamic
   user-memory window, but no reservation/commit split or protection changes.
-- The only completed I/O request is a synchronous kernel-owned read by the
-  fixed `CHILD.ELF` file object. Do not add EL0 filenames, arbitrary devices or
-  offsets, pending I/O, or cancellation.
+- The fixed `CHILD.ELF` image keeps its synchronous kernel-owned IRP path.
+  Additional read-only FAT opens use process-local typed file handles and
+  bounded per-handle offsets. Paths are limited to 8.3 names in the root or
+  one subdirectory. Do not add writes, arbitrary devices or user-chosen
+  offsets, pending I/O, or I/O cancellation yet.
 - Most NT syscall entries, I/O facilities, object access checks, and the
   security model remain scaffolding rather than finished operating-system
   services.
@@ -290,8 +356,9 @@ None recorded for local or CI smoke.
 ## Verification Requirements
 
 Run `make smoke` for meaningful kernel, MMU, scheduler, syscall, process, or
-I/O changes, including keyboard input. It exercises a private smoke-flagged
-disk and an unmodified normal boot, and is the regression check for the QEMU
+I/O changes, including keyboard and pointer input. It exercises a private smoke-flagged
+disk, an unmodified normal boot, and a private fallback boot; it is the
+regression check for the QEMU
 `virt`/TCG path; a successful compile alone is not completion. Smoke injects
 `help`, Ctrl-U,
 Backspace, Shift, Caps Lock, and Ctrl-L key events and checks responses; additional

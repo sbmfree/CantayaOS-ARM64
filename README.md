@@ -6,15 +6,16 @@ learn and demonstrate how computers run software. It explores low-level
 concepts such as kernels, processes, memory management, hardware interaction,
 and system calls through a working system in QEMU.
 
-![CantayaOS graphical terminal running in QEMU](docs/cantayaos-screenshot.png)
+![CantayaOS desktop running in QEMU](docs/cantayaos-desktop.png)
 
 CantayaOS is a Rust operating system for AArch64 (ARMv8-A) systems with UEFI
 boot and an NT-like kernel architecture. Its custom PE32+ loader uses
 `uefi-rs`, and its supported development platform is QEMU `aarch64` `virt`
 with OVMF.
 
-For the active roadmap, constraints, and required validation, start with
-[STATUS.md](STATUS.md). The complete documentation map is in
+For the active milestone, constraints, and required validation, start with
+[STATUS.md](STATUS.md). The longer roadmap and diagrams are in
+[PLAN.md](PLAN.md). The complete documentation map is in
 [docs/README.md](docs/README.md).
 
 ## Implemented Features
@@ -25,8 +26,12 @@ For the active roadmap, constraints, and required validation, start with
 - Timer-based preemptive scheduling and process and thread management.
 - System calls and typed handles for process and thread objects.
 - VirtIO block device access and FAT-backed loading of the fixed `CHILD.ELF` image.
-- EL0 terminal with built-in commands, serial and VirtIO keyboard input, and
-  framebuffer output; an EL1 prompt remains as a fallback.
+- EL0 desktop with a software cursor, taskbar, movable and resizable windows, terminal,
+  and read-only file browser. VirtIO keyboard and absolute pointer input work
+  alongside the serial console; an EL1 prompt remains as a fallback.
+- Read-only FAT file handles and one-level 8.3 directory traversal from EL0.
+- Shell `ls`, `cat`, and `run` commands; named ELF programs receive a bounded
+  argument string and report an exit status.
 - Automated QEMU smoke testing locally and in GitHub Actions.
 
 ## Architecture At A Glance
@@ -78,43 +83,72 @@ cp /tmp/usr/share/edk2/aarch64/QEMU_VARS.fd /path/to/CantayaOS-ARM64/tools/edk2-
 ## Build And Run
 
 ```bash
-# Build the UEFI loader, kernel, and both user-mode ELFs.
+# Build the UEFI loader, kernel, and three user-mode ELFs.
 make build
 
-# Build only the initial and CHILD.ELF user-mode programs.
+# Build the initial, CHILD.ELF, and HELLO.ELF user-mode programs.
 make user
 
-# Create the FAT32 ESP image containing the boot artifacts and CHILD.ELF.
+# Create the FAT32 ESP image with boot artifacts, sample files, and programs.
 make iso
 
 # Build the image and launch QEMU with a visible display.
 make run
 
-# Build and boot QEMU headlessly, validating smoke and ordinary interactive boots.
+# Build and boot QEMU headlessly, validating smoke, ordinary, and fallback boots.
 make smoke
 
 # Remove generated build artifacts and disk images.
 make clean
 ```
 
-After both boot validation programs finish, a controlled EL0 shell starts and
-the QEMU window clears the boot logs and shows a CantayaOS banner, version,
-and terminal pane at the bottom.
-The bootloader selects a 1024x768 display mode when the firmware offers it.
-Click the QEMU window to type into the terminal using its VirtIO keyboard;
-the serial console in the shell that launched `make run` (`-serial stdio`)
-also accepts input. Commands and their output appear in both places. Type
-`help` for the built-in commands: `help`, `info`, `uptime`, `mem`,
-`echo <text>`, and `clear`. Backspace edits the line; Ctrl-U clears it, and Ctrl-L
-redraws the terminal screen. The current keyboard map covers US ASCII keys,
-Shift, Caps Lock, and these editing keys; the EL0 shell blocks on its exclusive
-console-input handle when a bounded read finds no byte ready.
-The prompt accepts built-in commands, not arbitrary programs or file paths.
+After both boot validation programs finish, the initial user process starts
+an EL0 desktop with Terminal and Files windows. The bootloader selects a
+1024x768 display mode when available. The desktop draws into private user
+buffers and presents bounded updates through the kernel; it uses software
+rendering and QEMU's VirtIO keyboard and absolute tablet pointer.
+
+Click a window or its taskbar button to focus it. Drag a title bar to move a
+window; drag the bottom-right grip to resize it. Click `_` to minimize and
+restore with the taskbar or focus shortcuts. Terminal reflows its text; Paint
+keeps strokes hidden by a smaller canvas. Terminal and Files can also be hidden
+with `x` and reopened from the taskbar.
+F1 opens Terminal, F2 opens Files, F3 launches or focuses Paint, and Tab cycles
+through windows. In Files, click a folder, `.TXT` file or `.ELF` app, or use
+Up/Down and Enter. Back or Esc returns to the
+root. The preview shows up to four wrapped lines from the first 1 KiB of a
+text file; use terminal `cat` for the complete text.
+
+The terminal accepts `help`, `info`, `uptime`, `mem`, `echo <text>`, `clear`,
+`ls [DIR]`, `cat PATH`, and `run PATH [argument]`. Try `cat README.TXT`,
+`ls DOCS`, or `run BIN/HELLO.ELF world`. Files are read-only and names use
+FAT 8.3 format in the root or one subdirectory. Backspace edits the line,
+Ctrl-U clears it, and Ctrl-L clears the terminal while retaining the command.
+Commands and program output also appear on the serial console that launched
+`make run`; serial input always addresses the terminal. The desktop blocks
+when no input, output or application update is ready. Graphical `run` launches
+asynchronously and reports completion while the desktop stays responsive.
+Paint runs in a separate EL0 process: click and drag to draw, use keys 1–4 for
+colors, C to clear, and Esc to quit. App `x` closes its surface; restarting Paint
+creates a blank canvas. The boot disk remains read-only. A separate `CANTDATA`
+disk is used only by private transaction regression probes; no shell write
+command exists.
+
+The graphical desktop supports 800x600 through 1024x768 RGB/BGR framebuffers.
+Other display configurations retain the text shell. If the user process
+exits, the EL1 terminal reclaims the display and both console input devices.
+See [docs/desktop.md](docs/desktop.md) for the graphics ABI and current limits.
 
 `make smoke` is the current regression check. Its scope and expected runtime
 evidence are documented in [docs/verified-features.md](docs/verified-features.md).
 It runs the input-ownership probe only on a private copy of the boot disk, then
-checks the unmodified disk's interactive keyboard and serial input.
+checks the unmodified disk's interactive keyboard and serial input. A third
+private boot deliberately ends the active desktop and verifies EL1 fallback input.
+The ordinary boot also checks actual framebuffer pixels for mouse movement,
+focus, file previews, dragging, closing and reopening windows, and independent
+Paint applications with asynchronous launch and completion. It also verifies
+resizing, text reflow, drawing retention and minimize/restore. It saves a
+screenshot to `target/desktop.ppm`.
 The Rust GitHub Actions workflow also runs this headless QEMU check on Ubuntu
 with AArch64 UEFI firmware.
 
@@ -126,19 +160,23 @@ with AArch64 UEFI firmware.
 CantayaOS-ARM64/
 ├── bootloader/    UEFI PE32+ loader and handoff
 ├── kernel/        AArch64 kernel, HAL, drivers, executive, and syscalls
-├── shared/        no_std bootloader/kernel handoff types
-├── user/          Initial EL0 user executable
+├── shared/        no_std handoff, desktop ABI, and bitmap font
+├── user/          Initial EL0 validation, desktop, and shell executable
 ├── user-child/    Dedicated FAT-backed CHILD.ELF executable
+├── user-paint/    Independent EL0 Paint graphical application
+├── user-hello/    Named HELLO.ELF demo executable
 ├── scripts/       QEMU smoke-test driver
 ├── docs/          Architecture and verified-feature reference
-├── STATUS.md      Current roadmap and implementation constraints
+├── PLAN.md        Ordered roadmap and target data flow
+├── STATUS.md      Current milestone and implementation constraints
 └── Makefile       Build, image, QEMU, and smoke-test targets
 ```
 
 ## Current Work
 
-[STATUS.md](STATUS.md) is the current source of truth for priorities,
-constraints, blockers, and verification requirements. For completed guarantees,
+[STATUS.md](STATUS.md) is the current source of truth for the active milestone,
+constraints, blockers, and verification requirements. [PLAN.md](PLAN.md)
+records the ordered roadmap. For completed guarantees,
 search [docs/verified-features.md](docs/verified-features.md); for stable
 subsystem design, read [docs/architecture.md](docs/architecture.md).
 

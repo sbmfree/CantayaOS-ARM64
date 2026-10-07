@@ -12,7 +12,7 @@ UEFI firmware
   -> AArch64 kernel bootstrap and TTBR1 high-half execution
   -> HAL, drivers, and NT-style executive subsystems
   -> timer-scheduled EL0 processes with private TTBR0 roots
-  -> CantayaOS banner and kernel terminal after both init processes exit
+  -> CantayaOS banner and EL0 shell after both init processes exit
 ```
 
 ## UEFI Boot And Handoff
@@ -56,46 +56,68 @@ NT-style executive:
 - `arch`: MMU setup, exception vectors, fault decoding, and context-switch
   support.
 - `hal`: PL011 UART, framebuffer console, GICv2, and ARM generic timer.
-- `drivers`: VirtIO-MMIO block and input keyboard devices, plus FAT32.
-- `shell`: the bounded kernel command prompt shown after boot validation.
+- `drivers`: VirtIO-MMIO block, keyboard and absolute tablet devices, plus FAT32.
+- `shell`: the bounded EL1 fallback prompt.
 - `Ke`: spinlocks, mutexes, DPCs, and waiting primitives.
 - `Mm`: physical pages, heap, kernel virtual mappings, and user address-space
   ownership.
 - `Ob`: typed objects and handle tables.
 - `Ps`: `EPROCESS`, `ETHREAD`, executable loading, and timer-driven round-robin
   scheduling.
-- `Io`: IRPs, driver/device dispatch, and the fixed image-read boundary.
+- `Io`: IRPs, fixed image dispatch, and bounded read-only FAT file access.
 - `Se`: security-reference-monitor scaffolding.
 
-The layering is intentional: process loading consumes the I/O-owned file
-object rather than FAT or VirtIO internals, while `Io` dispatches requests to a
-fixed driver/device path.
+The layering is intentional: fixed child loading consumes the I/O-owned file
+object rather than FAT or VirtIO internals. Named programs and user file reads
+also enter through `Io` and its bounded FAT path.
 
-## Boot Screen And Terminal
+## Desktop And Terminal
 
 The two initial EL0 `init.elf` processes run the boot validation workload.
-The System kernel thread waits for both processes to exit, then clears the
-framebuffer boot log and draws a CantayaOS banner with the kernel version.
-It starts a controlled copy of the retained `init.elf` in EL0 shell mode;
-if that process cannot start or exits, the System thread restores its EL1
-fallback prompt. Terminal text occupies a scrolling pane below the banner.
-The EL0 prompt accepts bounded ASCII lines and runs `help`, `info`, `uptime`,
-`mem`, `echo`, and `clear`. Terminal output goes to both the framebuffer and
-PL011 UART.
-The recurring System heartbeat and Thread-A/B demonstration loops are disabled.
+The System thread waits for both to exit, then starts a controlled copy in
+shell mode. On the supported framebuffer that process starts its own desktop:
+a software-composed background, taskbar, cursor, terminal, and read-only file
+browser. Independent EL0 apps submit bounded copied surfaces; the desktop
+composes them and routes focus, keys and content-local pointer input. Application
+waits block in the scheduler and are cancelled before thread reaping. App exit
+cleans up its surfaces; desktop exit invalidates every window. The kernel retains
+exclusive framebuffer ownership and accepts copied, bounded rectangle updates;
+no display physical address is exposed to a user process.
 
-QEMU attaches a modern VirtIO-MMIO keyboard. The driver scans the MMIO slots,
-negotiates VirtIO 1, checks the advertised key bitmap, and drains its event
-queue on input IRQs. It decodes US ASCII keys plus Shift, Caps Lock,
-Backspace, Enter, Ctrl-U, and Ctrl-L. The status queue is present, but keyboard
-LED feedback is not implemented. PL011 serial input remains available through
-`-serial stdio`. The terminal runs only its built-in commands, not arbitrary
-programs or file paths.
+Window resizing is a desktop-only copied-surface transaction: allocate first,
+copy intersecting rows, zero growth, then publish dimensions and a new revision.
+Reset/resize events cancel old gestures and wake app waiters. Owner queries and
+revision-guarded submissions let an app recompose safely after a racing resize.
+Minimizing lives in the EL0 compositor and preserves the kernel surface and ID.
+Terminal reflows visible text; Paint stores its full drawing separately from
+its current presentation buffer. Desktop state uses allocated user memory to
+leave room for startup and reflow on the guarded 16 KiB user stack.
+
+Keyboard and absolute pointer devices share a VirtIO-MMIO queue transport,
+selecting devices by their advertised event capabilities. The keyboard decodes
+US ASCII with Shift, Caps Lock, Backspace, Enter, Ctrl-U and Ctrl-L. During a
+desktop session it publishes structured key press/release/repeat events with
+optional text. The tablet publishes complete absolute position and button state
+at SYN_REPORT. Input IRQs wake the desktop through the existing console wait.
+The session is tied to the process that owns the exclusive `-2` input claim.
+
+Terminal commands remain `help`, `info`, `uptime`, `mem`, `echo`, `clear`, `ls`,
+`cat`, and `run`. Accepted console output reaches PL011 and a bounded desktop
+output mirror. Kernel diagnostic logs remain on UART while graphics owns the
+screen. Desktop startup diagnostics are discarded from the visible transcript.
+The user process consumes the mirror and renders the terminal with the shared
+bitmap font. Child program output follows the same path. Console clear resets
+only the terminal pane during a graphical session.
+
+Without a supported display, the EL0 text shell remains available. If the
+user process cannot start or exits, the System thread restores the EL1 prompt,
+resets graphical ownership and its bounded queues, and redraws the text screen.
+See [desktop.md](desktop.md) for the ABI, controls, limits and visual checks.
 
 EL0 diagnostic output uses only `NtWriteFile(-1, text, length)`, where `-1` is a
 fixed console-output pseudo-handle rather than a closable file-table entry.
 The syscall validates a bounded user range and supported ASCII text before a
-shared console path writes to both UART and framebuffer.
+shared console path writes to both UART and the framebuffer console or desktop output mirror.
 `NtReadFile(-2, buffer, capacity, count)` provides a separate, fixed input
 pseudo-handle.
 It validates both writable EL0 ranges before claiming PL011 and keyboard input
@@ -107,16 +129,26 @@ claim.
 consuming a byte. PL011 RX and VirtIO keyboard IRQs queue input and wake one
 registered reader when data is ready. The System thread no longer polls
 readiness in its hot loops. A close advances the claim generation and wakes
-old waiters with `STATUS_INVALID_HANDLE`; external
+old waiters with `STATUS_INVALID_HANDLE` and releases its desktop session; external
 thread or process termination cancels the registration before reaping. The EL0
 shell uses this wait after an empty nonblocking `NtReadFile`, while the EL1
 fallback remains available if the shell exits.
-Normal boots give the EL0 shell input ownership; only the private smoke ESP
+Normal boots give the EL0 shell input ownership; one private smoke ESP
 requests a controlled input probe through a `BootInfo` flag before starting
 that shell. The EL0 `clear` command uses a narrow owner-only redraw syscall
 rather than broadening `NtWriteFile` to accept escape sequences. System-info
 classes 0 and 1 provide free pages and elapsed 100 Hz ticks for `mem` and
 `uptime`.
+A separate private fallback boot requests a shell mode that claims input and
+then exits, allowing smoke to verify that EL1 reclaims both input devices.
+
+For read-only files, `NtCreateFile` accepts a writable handle output and a
+bounded path pointer/length. `NtReadFile` accepts the typed file handle, a
+writable buffer, its capacity, and a writable byte count; a zero count marks
+end-of-file. `NtQueryRootDirectory` and `NtQueryDirectory` return a 16-byte
+entry by ordinal for shell `ls`. `NtCreateProcess` selector two accepts a
+bounded path in `x3`/`x4` and optional argument bytes in `x2`/`x5`; it passes
+a child-owned, zero-terminated copy to the new program in `x1`.
 
 ## Processes, Threads, And Lifetime
 
@@ -164,13 +196,19 @@ These masks are limited handle metadata, not security tokens, ACLs, inheritance,
 or a general object-permission system.
 
 Finite waits share the existing `NtWaitForSingleObject` entry: its timeout
-pointer may reference a relative `u64` count of one through 1,000 100 Hz
-scheduler ticks. The scheduler records an absolute deadline for the sleeping
+pointer may reference a relative `u64` count of zero through 1,000 100 Hz
+scheduler ticks. Zero polls completion without registering a waiter. Positive
+timeouts record an absolute deadline for the sleeping
 thread in an ordered internal queue; the timer IRQ readies only expired entries.
 Before returning `STATUS_TIMEOUT`, the thread removes itself from the typed
 process or thread completion queue, so later completion cannot wake a stale
 waiter. A signaled finite wait retains the same final-status output behavior as
 an infinite wait, while a timeout leaves that output untouched.
+
+Exception frames preserve all FP/SIMD registers plus FPCR/FPSR. Kernel context
+switches preserve q8–q15 and FP controls, and first EL0 entry clears all vectors
+and FP state. Integer Rust copies can use SIMD, so this is part of user-state
+isolation. An assembly probe holds all lanes live across syscalls and preemption.
 
 ## Syscalls And User-Memory Validation
 
@@ -188,35 +226,53 @@ guarded stacks, W^X ELF mapping, and instruction-cache synchronization after
 mapping executable pages. Detailed current syscall limits are in
 [STATUS.md](../STATUS.md).
 
-## Fixed VirtIO/FAT Image Path
+## Read-Only VirtIO/FAT Paths
+
+The synchronous block reader uses a 250 ms ARM counter deadline per wait.
+A timeout leaves its DMA request pending; the next read drains that completion
+before changing descriptors or the shared buffer. Invalid completion identity
+stops further queue reuse. Output bytes are copied only after a successful
+completion. Ordinary desktop smoke forces a timeout with QMP disk throttling
+and verifies correct file contents after removing the throttle.
 
 QEMU attaches the boot image as an explicit modern VirtIO-MMIO block device.
 The driver scans the standard MMIO slots, accepts only a VirtIO 1.0 block
 device, and performs synchronous bounded sector reads with physical-page queue
-storage. The FAT32 reader validates volume geometry and reads root-level 8.3
-files from the live disk without keeping the image in UEFI or kernel heap
-memory.
+storage. The FAT32 reader validates volume geometry and reads bounded 8.3
+files from the root or one subdirectory without retaining the disk image in
+UEFI or kernel heap memory.
+
+A second VirtIO block device is identified by the `CANTDATA` FAT32 volume label.
+It is independent of the read-only boot ESP and serves only the private,
+bounded one-cluster FAT32 create protocol. The protocol mirrors a transaction
+record in reserved sectors, flushes every durable phase, and performs bounded
+recovery before accepting another internal create. It has no public syscall or
+shell interface.
 
 The I/O manager owns a private `ReadOnlyImage` descriptor for `CHILD.ELF` and
-exposes the sole public `ReadOnlyFile` object. It is not in the object-manager
-name directory, so EL0 cannot enumerate or open it by name. A full-image read
+exposes a fixed kernel-owned `ReadOnlyFile` object. It is not in the object-manager
+name directory. A full-image read
 creates a synchronous kernel-only `IRP_MJ_READ`, dispatches it through the
 fixed FAT image driver/device path, and accepts it only when the completion
-status and byte count agree. Process creation supports only the retained
-boot-image source or this fixed live child source; both are parsed and mapped
-through the same ELF-validation path.
+status and byte count agree. The named-file source uses the separate bounded
+read-only FAT path in `Io`, then the same ELF-validation and mapping path as
+the retained boot image and fixed child image. User file handles are typed,
+process-local, read-only, and own a current offset; `NtReadFile` returns a zero
+count at EOF. A directory query returns bounded 8.3 entries. Named processes
+may receive up to 64 printable argument bytes copied into child-owned memory.
 
 ## Test Platform And Smoke Testing
 
 The development test platform is QEMU `aarch64` `virt` with OVMF, using the
 `cortex-a57` TCG CPU model on macOS. `make smoke` builds the boot image and
 starts headless QEMU; its marker contract is the regression check for the MMU,
-EL0, scheduler, user-memory, process/thread, fixed-image I/O, terminal startup,
+EL0, scheduler, user-memory, process/thread, read-only I/O, terminal startup,
 and VirtIO keyboard input: a private QMP monitor sends `help`, an edited
 `echo` command, a Shift/Caps Lock mixed-case payload, and Ctrl-L with an
 unfinished line, then runs `clear` and a follow-up `echo`. The serial log must
 contain the responses and redraw. Smoke also sends `echo`, `info`, `uptime`,
-and `mem` to PL011, checks their responses, rejects a duplicate prompt after
-CRLF, and verifies unknown-command recovery. This is not hardware
-certification or a Windows-compatibility claim. See
+and `mem` to PL011, then checks `ls`, `cat`, and `run` on root and subdirectory
+paths. It rejects a duplicate prompt after CRLF and verifies unknown-command
+recovery. A separate private boot checks EL1 fallback after EL0 exits. This is
+not hardware certification or a Windows-compatibility claim. See
 [verified-features.md](verified-features.md) for the complete evidence scope.
